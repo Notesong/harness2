@@ -128,6 +128,30 @@ def _close_job(proc: subprocess.Popen) -> bool:
     return True
 
 
+def _wait_for_exit(proc: subprocess.Popen) -> None:
+    if os.name != "nt":
+        proc.wait()
+        return
+    # Job teardown is asynchronous. Popen.kill() can catch access denied while
+    # teardown is pending and cache an exit code before the handle is signaled;
+    # Popen.wait() then skips its native wait. Always wait on the owned handle.
+    import ctypes
+    from ctypes import wintypes
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    kernel.WaitForSingleObject.restype = wintypes.DWORD
+    kernel.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+    kernel.GetExitCodeProcess.restype = wintypes.BOOL
+    result = kernel.WaitForSingleObject(int(proc._handle), 0xFFFFFFFF)  # INFINITE
+    if result != 0:  # WAIT_OBJECT_0
+        raise ctypes.WinError(ctypes.get_last_error())
+    code = wintypes.DWORD()
+    if not kernel.GetExitCodeProcess(int(proc._handle), ctypes.byref(code)):
+        raise ctypes.WinError(ctypes.get_last_error())
+    proc.returncode = code.value
+
+
 def start(args, **kwargs) -> subprocess.Popen:
     """Start an owned process tree; close it with terminate_tree or run()."""
     options = popen_group_kwargs()
@@ -147,7 +171,7 @@ def start(args, **kwargs) -> subprocess.Popen:
             _close_job(proc)
             if proc.poll() is None:
                 proc.kill()
-            proc.wait()
+            _wait_for_exit(proc)
             for stream in (proc.stdin, proc.stdout, proc.stderr):
                 if stream is not None:
                     stream.close()
@@ -226,7 +250,7 @@ def _terminate_tree(proc: subprocess.Popen, *, grace: float) -> None:
             pass
     if proc.poll() is None:
         proc.kill()
-    proc.wait()
+    _wait_for_exit(proc)
 
 
 def run(args, *, timeout: float | None = None, input=None, capture_output: bool = False,

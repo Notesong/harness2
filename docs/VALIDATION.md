@@ -453,7 +453,7 @@ in the local verification report; the CLI itself had returned successfully.
 
 ### Dormant capability catalog (2026-10-19)
 
-The catalog checkpoint passed the native Windows suite: **278 tests in 82.559s**,
+The final catalog checkpoint passed the native Windows suite: **279 tests in 83.495s**,
 with the same two explicit platform/privilege skips. All **27 Node UI tests**,
 Ruff, JavaScript syntax, whitespace checks, and 48 third-party asset checks
 passed. Catalog tests exercise real temporary archives, immutable publication,
@@ -466,8 +466,15 @@ assumptions and disagreement in fresh PID lookups after shutdown. Path assertion
 now compare resolved identities. Lifecycle tests retain original native process
 handles: the owned root must already be signaled when shutdown returns, and a
 known live grandchild must terminate within a bounded wait. A fresh numeric PID
-lookup is diagnostic only. Production lifecycle behavior was not changed to
-accommodate those assertions.
+lookup is diagnostic only. Both hosted Windows versions then exposed an actual
+shutdown race: a cached Python exit code could skip waiting while the original
+native process handle was still unsignaled. Cleanup now waits on that handle
+unconditionally and refreshes the final exit code. This follows the native
+[asynchronous termination contract](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-terminateprocess).
+The strict process-identity assertions remain in place.
+An added real-process regression recreates a cached exit code while the retained
+handle is still unsignaled. Cleanup must wait and report the actual final code;
+a negative control using the old wait shortcut fails this test.
 
 The live Studio catalog remains **disabled and empty**, with no profile opted
 in and no catalog events. Real Owen snapshot/context construction received no
@@ -475,8 +482,8 @@ catalog key or directory. Hash comparisons confirmed all **17 saved profile
 JSON records unchanged**. The disabled screen was inspected in the actual
 browser with no error/warning logs. No model server was started.
 
-A fresh offline wheel (461,077 bytes; SHA256
-`7ad9bb2d0bc4b949b5a78165d1a316bd9169e046f0fc573d2aa62b4998d33340`)
+A fresh offline wheel (461,329 bytes; SHA256
+`dcf0e75fdc15f149c1d98d1490b919502a18af6dd9ab8dfbe71507d09b84cb52`)
 was installed into a new virtual environment and exercised with `-I` outside
 the checkout. All 60 Python files and three UI assets matched the frozen
 production source. Fifty bundled third-party files and eight license files

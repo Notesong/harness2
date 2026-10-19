@@ -388,6 +388,66 @@ class WindowsProcessReviewTests(unittest.TestCase):
             finally:
                 kernel.CloseHandle(handle)
 
+    def test_cached_python_exit_code_cannot_skip_actual_native_process_exit(self):
+        # Closing a Job can start asynchronous termination. CPython's subsequent
+        # kill() may cache an exit code after access denied, before its process
+        # handle is signaled; Popen.wait() then returns that cached code. Recreate
+        # the observable state with a real gated child, without mocking kernel
+        # APIs, cleanup functions, Popen.wait(), or the native process handle.
+        import _winapi
+
+        ready, release = self.root / "ready", self.root / "release"
+        program = (
+            "import sys,time; from pathlib import Path; "
+            "ready,release=map(Path,sys.argv[1:]); ready.touch(); "
+            "deadline=time.monotonic()+15; "
+            "exec('while not release.exists() and time.monotonic()<deadline: time.sleep(0.01)'); "
+            "sys.exit(37 if release.exists() else 99)"
+        )
+        child = subprocess.Popen([sys.executable, "-c", program, str(ready), str(release)],
+                                 **processes.popen_group_kwargs())
+        entered, returned = threading.Event(), threading.Event()
+        errors = []
+
+        def stop():
+            entered.set()
+            try:
+                processes.terminate_tree(child)
+            except BaseException as exc:
+                errors.append(exc)
+            finally:
+                returned.set()
+
+        worker = threading.Thread(target=stop)
+        try:
+            deadline = time.monotonic() + 5
+            while not ready.exists() and time.monotonic() < deadline:
+                time.sleep(0.01)
+            self.assertTrue(ready.exists(), "The gated child never became ready.")
+            self.assertEqual(_winapi.WaitForSingleObject(child._handle, 0), _winapi.WAIT_TIMEOUT)
+            child.returncode = 0  # The cached value is deliberately not the child's actual final code.
+            worker.start()
+            self.assertTrue(entered.wait(timeout=5))
+            self.assertFalse(returned.wait(timeout=0.1), "Cleanup trusted a cached return code.")
+            self.assertEqual(_winapi.WaitForSingleObject(child._handle, 0), _winapi.WAIT_TIMEOUT)
+            release.touch()
+            worker.join(timeout=5)
+            self.assertFalse(worker.is_alive(), "Cleanup never observed the real process exit.")
+            self.assertEqual(errors, [])
+            self.assertEqual(_winapi.WaitForSingleObject(child._handle, 0), _winapi.WAIT_OBJECT_0)
+            self.assertEqual(child.returncode, 37)
+        finally:
+            # Restoring returncode is necessary for Popen.kill()/wait() to work
+            # even against the deliberately broken cached-code implementation.
+            release.touch()
+            if _winapi.WaitForSingleObject(child._handle, 5000) == _winapi.WAIT_TIMEOUT:
+                child.returncode = None
+                child.kill()
+            child.returncode = None
+            child.wait(timeout=5)
+            if worker.ident is not None:
+                worker.join(timeout=5)
+
     def test_success_closes_job_and_stops_remaining_child(self):
         pid_file = self.root / "child.pid"
         parent = (
