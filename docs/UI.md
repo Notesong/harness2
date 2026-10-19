@@ -91,6 +91,28 @@ the score report, then adds a readable wrap-up before unloading an owned model.
 Concurrent domains controls domain workers; the current form
 selects one domain.
 
+## Keep a model's profile
+
+**Profiles** gives a model a continuing identity with separate configuration
+snapshots and harness ancestry. Create a profile, save its connection in Setup,
+then use **Capture saved Setup**. This records public settings and hashes local
+model/runtime files without loading the model. Choose a clean baseline or save
+a finished run's harness as a candidate, then explicitly select the configuration
+and harness to use for future runs.
+
+New experiments can select a profile and a particular configuration and harness.
+Their recorded starting snapshot stays fixed even when the profile later changes.
+The profile's notes, evaluation results, and full history are kept outside model
+context; only the selected harness and applicable experience seed the run.
+Existing runs can still be opened from **Runs** or the profile's associated runs.
+
+Profiles also support observations and unresolved hypotheses, optional conversation
+references, smaller harness candidates, retirement, and explicit borrowing from
+another profile. Borrowing creates an independent hypothesis and does not activate
+it. Active and retired describe use; observed, suspected, replicated, and
+transferred describe supporting evidence. See [PROFILES.md](PROFILES.md) for
+the storage boundaries, identity limits, and Owen's historical import.
+
 ## Follow, stop, and resume
 
 Studio runs one operation at a time. Its subprocesses use the same process-tree
@@ -130,8 +152,8 @@ WorkBuddy's verifier scores and grading text are excluded from downloads.
 Experiment outputs live under `runs/ui/` by default. `HARNESS2_RUNS_DIR` changes
 the runs root. `.harness2-ui/` stores the job history, redacted activity logs,
 and the current server session. These paths and `.env` are ignored by Git.
-Existing CLI runs remain accessible on disk; this initial interface lists
-operations it launches.
+Recognized existing CLI runs are discovered as read-only history. Profiles and
+their append-only histories live in the separate `.harness2/profiles/` archive.
 
 The server binds only to `127.0.0.1`, checks Host and Origin, and requires a
 random session token for every API request and artifact download. The browser

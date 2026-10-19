@@ -168,6 +168,10 @@ def build(
         shutil.copytree(library_dir, dest / "library", dirs_exist_ok=True)
         lib = True
 
+    populate_profile = getattr(adapter, "populate_profile_context", None)
+    if callable(populate_profile):
+        lib = populate_profile(task_id, dest / "library") or lib
+
     assert_no_leak_paths(dest, adapter.spec.leak_globs)
 
     assert_no_grader_verdicts(dest)

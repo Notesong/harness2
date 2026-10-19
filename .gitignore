@@ -9,6 +9,7 @@ build/
 dist/
 .env
 .harness2-ui/
+.harness2/
 runs/
 dependencies/*/
 dependencies/*.tmp

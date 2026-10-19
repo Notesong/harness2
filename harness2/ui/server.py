@@ -32,6 +32,9 @@ class App:
     def __init__(self, root: Path = config.ROOT):
         self.workspace = Workspace(root)
         self.jobs = JobManager(self.workspace)
+        from .profiles import Profiles
+
+        self.profiles = Profiles(self.workspace, self.jobs)
         self.token = secrets.token_urlsafe(32)
 
     def state(self):
@@ -50,6 +53,7 @@ class App:
             "benchmarks": self.workspace.benchmarks(),
             "jobs": jobs,
             "active_id": active_id,
+            "profiles": self.profiles.list(),
         }
 
     def connection(self, data: dict):
@@ -196,6 +200,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"ok": True, "workspace": str(self.server.app.workspace.root)})
             elif path == "/api/state":
                 self._json(self.server.app.state())
+            elif path.startswith("/api/profiles/") and len(path.strip("/").split("/")) == 3:
+                self._json(self.server.app.profiles.get(path.rsplit("/", 1)[1]))
             elif path.startswith("/api/jobs/") and len(path.strip("/").split("/")) == 3:
                 self._json(self.server.app.jobs.get(path.rsplit("/", 1)[1]))
             elif path.startswith("/api/artifacts/"):
@@ -242,7 +248,14 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError("Expected a JSON object.")
             path = urlsplit(self.path).path
             app = self.server.app
-            if path == "/api/jobs":
+            if path == "/api/profiles":
+                self._json(app.profiles.create(data), 201)
+            elif path.startswith("/api/profiles/"):
+                parts = path.strip("/").split("/")
+                if len(parts) != 4:
+                    raise KeyError(path)
+                self._json(app.profiles.command(parts[2], parts[3], data))
+            elif path == "/api/jobs":
                 self._json(
                     app.jobs.start(
                         data.get("kind"),

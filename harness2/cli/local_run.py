@@ -40,6 +40,9 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--max-tasks", type=int, default=1, help="task limit per selected domain")
     result.add_argument("--workers", type=int, default=1, help="domains to run concurrently")
     result.add_argument("--output", type=Path, help="new or empty experiment directory")
+    result.add_argument("--profile", help="independent model profile ID, for example owen")
+    result.add_argument("--configuration", help="saved configuration ID; defaults to the profile's active one")
+    result.add_argument("--revision", help="saved harness revision ID; candidates can be tested without adoption")
     result.add_argument(
         "--dry-run", action="store_true", help="preview tasks without starting a model"
     )
@@ -94,8 +97,8 @@ def _stop_signals(cancelled: threading.Event):
             signal.signal(signum, handler)
 
 
-def _local_environment() -> dict[str, str]:
-    environment = profile_defaults(os.environ)
+def _local_environment(environment=None) -> dict[str, str]:
+    environment = profile_defaults(os.environ if environment is None else environment)
     local = profile(environment)
     if local is None:
         raise ValueError("Configure HARNESS2_LOCAL_BASE_URL and HARNESS2_LOCAL_MODEL first.")
@@ -119,11 +122,30 @@ def _run(args: argparse.Namespace) -> int:
         raise ValueError("--k, --workers, and --max-tasks must be positive integers.")
     C.parse_modes(args.modes)
     phases = commands(args)
+    profile_store = None
+    selected_environment = None
+    if args.profile:
+        from ..profile_runtime import configuration_environment
+        from ..profiles import ProfileStore
+
+        profile_store = ProfileStore(config.ROOT)
+        selected = profile_store.get(args.profile)
+        configuration = next((row for row in selected["configurations"]
+                              if row["id"] == (args.configuration or selected.get("active_configuration_id"))), None)
+        revision = next((row for row in selected["revisions"]
+                         if row["id"] == (args.revision or selected.get("active_revision_id"))), None)
+        if not configuration or not revision:
+            raise ValueError("Choose a saved configuration and harness in this profile first.")
+        selected_environment = configuration_environment(os.environ, configuration["snapshot"])
+        print(f"Profile: {selected['name']} / {configuration['id'][:12]} / {revision['id'][:12]}", flush=True)
+    elif args.configuration or args.revision:
+        raise ValueError("Use --profile with --configuration or --revision.")
     if args.dry_run:
         return processes.run(
-            [*phases[1][1], "--dry-run"], cwd=config.ROOT, stdin=subprocess.DEVNULL
+            [*phases[1][1], "--dry-run"], cwd=config.ROOT, stdin=subprocess.DEVNULL,
+            **({"env": selected_environment} if selected_environment is not None else {}),
         ).returncode
-    environment = _local_environment()
+    environment = _local_environment(selected_environment)
     if args.output:
         output = args.output.expanduser().resolve()
     else:
@@ -133,6 +155,21 @@ def _run(args: argparse.Namespace) -> int:
         raise ValueError(f"Choose a new or empty --output directory: {output}")
     output.mkdir(parents=True, exist_ok=True)
     environment["HARNESS2_RUNS_DIR"] = str(output)
+    pinned = None
+    if profile_store is not None:
+        from ..profile_runtime import (
+            capture_run_reference,
+            pin_profile,
+            profile_run_outcome,
+            run_environment,
+            verify_configuration,
+        )
+
+        pinned = pin_profile(profile_store, args.profile, output,
+                             configuration_id=configuration["id"], revision_id=revision["id"])
+        environment = run_environment(environment, output)
+        verify_configuration(pinned["configuration"], environment)
+        capture_run_reference(profile_store, pinned, output, status="starting", title="Local CLI experiment")
     phases.append(
         (
             "Write readable wrap-up",
@@ -148,6 +185,7 @@ def _run(args: argparse.Namespace) -> int:
             log_path=output / "local-server.log",
             cancelled=cancelled.is_set,
         )
+        all_done = False
         try:
             append_event(
                 output,
@@ -223,6 +261,7 @@ def _run(args: argparse.Namespace) -> int:
                     )
                     return result.returncode
                 append_event(output, label + " finished", "Recorded exit code: 0.", "phase")
+            all_done = True
         finally:
             runtime.close()
             append_event(
@@ -239,6 +278,18 @@ def _run(args: argparse.Namespace) -> int:
                         "The final timeline could not be saved; existing results remain available.",
                         file=sys.stderr,
                     )
+            if pinned:
+                try:
+                    profile_run_outcome(profile_store, pinned, output, {
+                        "kind": "benchmark", "title": "Local CLI experiment",
+                        "params": {"benchmark": args.bench, "substrate": args.substrate},
+                        "output_dir": str(output),
+                        "status": "cancelled" if cancelled.is_set() else
+                        "completed" if all_done else "interrupted",
+                    })
+                except (OSError, ValueError):
+                    print("The profile history could not be updated; run evidence remains saved.",
+                          file=sys.stderr)
     print(f"\nComplete. Results and report: {output}", flush=True)
     return 0
 

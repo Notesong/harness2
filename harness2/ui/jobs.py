@@ -147,7 +147,7 @@ class JobManager:
             )
         ):
             raise ValueError("Choose valid domains from the benchmark list.")
-        return {
+        result = {
             "benchmark": benchmark,
             "subset": subset,
             "substrate": substrate,
@@ -156,6 +156,17 @@ class JobManager:
             "pipeline": bool(data.get("pipeline", True)),
             **numbers,
         }
+        profile_id = data.get("profile_id")
+        if profile_id:
+            if not isinstance(profile_id, str) or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", profile_id):
+                raise ValueError("Choose a valid model profile.")
+            result["profile_id"] = profile_id
+            for key in ("profile_configuration_id", "profile_revision_id"):
+                if data.get(key):
+                    if not isinstance(data[key], str) or not re.fullmatch(r"[a-f0-9]{64}", data[key]):
+                        raise ValueError("Choose a valid saved profile configuration or harness.")
+                    result[key] = data[key]
+        return result
 
     def _cell(self, params: dict) -> list[str]:
         args = ["--bench", params["benchmark"], "--substrate", params["substrate"]]
@@ -163,7 +174,7 @@ class JobManager:
             args += ["--subset", params["subset"]]
         return args
 
-    def _plan(self, kind: str, params: dict, output: Path | None) -> list[dict]:
+    def _plan(self, kind: str, params: dict, output: Path | None, *, provider=None) -> list[dict]:
         def phase(key, label, module, args):
             return {
                 "id": key,
@@ -235,7 +246,7 @@ class JobManager:
                 phase("judge", "Judge adopted results", "harness2.cli.judge", identity),
                 phase("report", "Build score report", "harness2.cli.report", identity),
             ]
-            if self.workspace.settings()["provider"] == "local":
+            if (provider or self.workspace.settings()["provider"]) == "local":
                 summary = phase(
                     "summary", "Write a readable wrap-up", "harness2.cli.summarize",
                     ["--output", output],
@@ -254,9 +265,12 @@ class JobManager:
             raise ValueError("Confirm that you want to use the configured model before starting.")
         params = self.parameters(data)
         source_id = data.get("source_id")
+        pinned = None
+        profile_plan = None
         with self.lock:
             if self.active_id:
                 raise BusyError("Another operation is running. Let it finish or stop it first.")
+            effective_settings = self.workspace.settings()
             if resume_id:
                 prior = self.jobs.get(resume_id)
                 if prior and prior.get("imported"):
@@ -268,7 +282,7 @@ class JobManager:
                 ):
                     raise ValueError("This operation cannot be resumed.")
                 current = self.workspace.settings()
-                if prior["kind"] == "benchmark" and any(
+                if prior["kind"] == "benchmark" and not prior.get("profile") and any(
                     current.get(key) != prior.get("models", {}).get(key) for key in MODEL_FIELDS
                 ):
                     raise ValueError(
@@ -276,6 +290,10 @@ class JobManager:
                     )
                 kind, params = prior["kind"], prior["params"]
                 output = Path(prior["output_dir"])
+                if prior.get("profile"):
+                    from ..profile_runtime import load_snapshot
+
+                    pinned = load_snapshot(output / "profile-start.json")
             else:
                 output = None
             if kind in ("judge", "report"):
@@ -285,9 +303,13 @@ class JobManager:
                 if not source or source["kind"] != "benchmark" or not source.get("output_dir"):
                     raise ValueError("Choose the experiment to judge or report.")
                 params, output = source["params"], Path(source["output_dir"])
+                if source.get("profile"):
+                    from ..profile_runtime import load_snapshot
+
+                    pinned = load_snapshot(output / "profile-start.json")
             if (
                 kind in ("benchmark", "judge")
-                and self.workspace.settings()["provider"] == "local"
+                and (params.get("profile_id") or self.workspace.settings()["provider"] == "local")
                 and (params["substrate"] != "oc" or params["benchmark"] != "jb")
             ):
                 raise ValueError(
@@ -309,7 +331,38 @@ class JobManager:
                 )
             if output is not None:
                 output.mkdir(parents=True, exist_ok=True)
-            phases = self._plan(kind, params, output)
+            if params.get("profile_id") and pinned is None:
+                if kind not in ("benchmark", "preview"):
+                    raise ValueError("Choose a profile for an experiment or plan.")
+                if kind == "preview":
+                    # A plan needs no output, immutable records, or model startup.
+                    from ..profiles import ProfileStore
+
+                    profile = ProfileStore(self.workspace.root).get(params["profile_id"])
+                    selected_configuration = params.get("profile_configuration_id") or profile.get("active_configuration_id")
+                    selected_revision = params.get("profile_revision_id") or profile.get("active_revision_id")
+                    if (not any(row["id"] == selected_configuration for row in profile["configurations"])
+                            or not any(row["id"] == selected_revision for row in profile["revisions"])):
+                        raise ValueError("Choose an active configuration and harness in this profile first.")
+                    effective_settings = next(row["snapshot"]["settings"] for row in profile["configurations"]
+                                              if row["id"] == selected_configuration)
+                    profile_plan = {
+                        "profile_id": profile["id"], "profile_name": profile["name"],
+                        "configuration_id": selected_configuration, "revision_id": selected_revision,
+                    }
+                else:
+                    from ..profile_runtime import pin_profile
+                    from ..profiles import ProfileStore
+
+                    pinned = pin_profile(
+                        ProfileStore(self.workspace.root), params["profile_id"], output,
+                        configuration_id=params.get("profile_configuration_id"),
+                        revision_id=params.get("profile_revision_id"),
+                    )
+            if pinned:
+                effective_settings = pinned["configuration"]["settings"]
+            phases = (self._plan(kind, params, output, provider=effective_settings.get("provider", "local"))
+                      if params.get("profile_id") else self._plan(kind, params, output))
             benchmark_name = next(
                 (
                     row[1]
@@ -365,9 +418,22 @@ class JobManager:
                 "exit_code": None,
                 "total_tasks": total,
                 "progress": {"done": 0, "failed": 0, "total": total},
-                "models": {key: self.workspace.settings().get(key) for key in MODEL_FIELDS},
+                "models": {key: effective_settings.get(key) for key in MODEL_FIELDS},
                 "resumed_from": resume_id,
             }
+            if pinned:
+                record["profile"] = {key: pinned[key] for key in (
+                    "profile_id", "profile_name", "configuration_id", "revision_id", "snapshot_hash",
+                )}
+                from ..profile_runtime import capture_run_reference
+                from ..profiles import ProfileStore
+
+                capture_run_reference(
+                    ProfileStore(self.workspace.root), pinned, output,
+                    job_id=identifier, title=record["title"], status="starting", created_at=record["created_at"],
+                )
+            elif profile_plan:
+                record["profile_plan"] = profile_plan
             self.jobs[identifier] = record
             self.active_id = identifier
             self._write(record)
@@ -412,12 +478,23 @@ class JobManager:
             env = self.workspace.environment()
             if record["output_dir"]:
                 env["HARNESS2_RUNS_DIR"] = record["output_dir"]
+            if record.get("profile"):
+                from ..profile_runtime import load_snapshot, run_environment, verify_configuration
+
+                pinned = load_snapshot(Path(record["output_dir"]) / "profile-start.json")
+                if any(record["profile"].get(key) != pinned[key] for key in record["profile"]):
+                    raise ValueError("The experiment's pinned profile changed.")
+                env = run_environment(env, Path(record["output_dir"]))
+                verify_configuration(pinned["configuration"], env)
+                from ..cli.local_run import _local_environment
+
+                env = _local_environment(env)
             secret_values = self.workspace.secrets()
             record.update(status="running", started_at=now())
             with log_path.open("a", encoding="utf-8", newline="\n") as log:
                 if (
                     record.get("kind") in ("benchmark", "judge", "check")
-                    and self.workspace.settings()["provider"] == "local"
+                    and env.get("HARNESS2_UI_PROVIDER", "local") == "local"
                     and env.get("HARNESS2_LOCAL_RUNTIME", "external") == "managed"
                     and identifier not in self.cancelled
                 ):
@@ -600,6 +677,18 @@ class JobManager:
                     self._write(record)
                 finally:
                     self.active_id = None
+                if record.get("profile"):
+                    try:
+                        from ..profile_runtime import profile_run_outcome
+                        from ..profiles import ProfileStore
+
+                        profile_run_outcome(
+                            ProfileStore(self.workspace.root), record["profile"], Path(record["output_dir"]),
+                            record,
+                        )
+                    except (OSError, ValueError) as exc:
+                        record["profile_archive_error"] = redact(str(exc))
+                        self._write(record)
 
     def get(self, identifier: str) -> dict:
         with self.lock:

@@ -405,6 +405,52 @@ model request, and cannot establish access to the selected models.
 
 ## Repeating local checks
 
+### Independent profile foundation (2026-10-19)
+
+The profile checkpoint passed the native Windows suite: **240 tests in 75.990s**,
+with two explicit skips for account symlink privileges and a case-sensitive
+filename fixture. The **13 Node rendering/behavior tests**, Ruff, JavaScript
+syntax, whitespace checks, and all 48 third-party asset digests also passed.
+
+Profile tests use real archive files, cross-process locks, native filesystem
+operations, a real Studio child process, and the real JobBench harness
+materializer. Their model lease and task executor are substituted. They verify
+immutable configuration/revision ancestry, candidate tests without adoption,
+atomic pin publication, changed settings/file/tool-policy detection, credential
+rotation, domain-scoped answer-free experience, retirement/restore, explicit
+borrowing, and durable finished outcomes that survive working-run rewrites.
+Raw notes, session/error bodies, and grader values are excluded from that outcome
+record. Evidence classifications do not become stronger automatically.
+
+The actual saved 64K experiment was explicitly imported as Owen. Its baseline,
+domain proposal, composition, reflection, observations, and evaluation caveats
+are preserved. SHA256 comparisons confirmed **69 original source files remained
+unchanged**. Repeating the import after consistency hardening left all **17
+archive JSON records unchanged**, including the active selection. The historical
+external-server configuration and a separately captured future managed
+configuration have matching model/runtime byte hashes.
+
+The real Studio screens and CLI dry-run were exercised with Owen and an
+explicit baseline candidate. The UI preview completed without starting a model;
+the active harness stayed unchanged. Browser error/warning logs were empty.
+No new model-backed profile experiment was run in this checkpoint. The completed
+64K run predates the profile machinery; importing it does not establish that a
+new profile-backed full model pipeline has been exercised. The existing actual
+model startup/summary/unload proof remains the earlier lifecycle evidence.
+
+A new offline wheel (441,311 bytes; SHA256
+`16718f95af0c384eeb6e720766fbeee67acc4ab58d149549437bfed56807a189`)
+was installed into a fresh virtual environment and exercised with `-I` outside
+the checkout. All 57 Python files and three UI assets matched the final source;
+50 bundled third-party files and eight license files were intentional and
+unchanged. Profile creation/configuration/revision/activation and every public
+CLI help command worked from the installed package. Its deterministic two-task,
+both-mode demo performed 28 executions and 32 scripted editor calls with no
+failures; resume performed zero additional executions or editor calls. These are
+scripted fixtures, not model-backed profile results. The initial proof script's
+UTF-8 decoder assumption for Windows CP1252 help output was corrected and retained
+in the local verification report; the CLI itself had returned successfully.
+
 From the checkout, with its development virtual environment installed:
 
 ```powershell
@@ -414,6 +460,7 @@ New-Item -ItemType Directory -Force $env:TEMP | Out-Null
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 .\.venv\Scripts\python.exe scripts/check_provenance.py
 .\.venv\Scripts\ruff.exe check harness2 tests scripts
+node --test tests/ui_story.test.cjs tests/profile_ui.test.cjs
 .\.venv\Scripts\python.exe -m pip wheel --no-index --no-deps --no-build-isolation --wheel-dir dist .
 .\.venv\Scripts\python.exe -m venv .test-tmp\wheel-check
 .\.test-tmp\wheel-check\Scripts\python.exe -m pip install --no-index --no-deps dist\harness2-0.1.0-py3-none-any.whl

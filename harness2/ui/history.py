@@ -243,7 +243,7 @@ def _record(output: Path, root: Path) -> dict | None:
     started = _time(workflow, "started_utc", "started_at") or _time(current, "started_at", "started_utc")
     created = _time(current, "created_at") or started or fallback
     title = "Local demo" if demo else {"jb": "JobBench", "lab": "LAB", "wb": "WorkBuddy"}[benchmark]
-    return {"id": hashlib.sha256(os.path.normcase(str(output.resolve())).encode("utf-8")).hexdigest()[:12],
+    record = {"id": hashlib.sha256(os.path.normcase(str(output.resolve())).encode("utf-8")).hexdigest()[:12],
             "kind": "demo" if demo else "benchmark", "title": title + " · " + output.name,
             "status": status, "params": params, "created_at": created, "started_at": started,
             "finished_at": ended or (fallback if status in ("succeeded", "failed", "cancelled") else None),
@@ -254,6 +254,22 @@ def _record(output: Path, root: Path) -> dict | None:
             "progress": {"done": max(0, done), "failed": max(0, failed), "total": max(0, total)},
             "imported": True, "error": "", "exit_code": 0 if status == "succeeded" else None,
             "resumed_from": None}
+    if identity.get("profile"):
+        # Read-only association; original CLI evidence and active profile pointers
+        # are never rewritten by history discovery.
+        from ..profile_runtime import load_snapshot
+
+        try:
+            pinned = load_snapshot(output / "profile-start.json")
+            binding = {key: pinned[key] for key in (
+                "profile_id", "profile_name", "configuration_id", "revision_id", "snapshot_hash",
+            )}
+            expected = {key: value for key, value in binding.items() if key != "profile_name"}
+            if identity["profile"] == expected:
+                record["profile"] = binding
+        except (OSError, ValueError, KeyError):
+            pass
+    return record
 
 
 def discover_history(workspace) -> list[dict]:

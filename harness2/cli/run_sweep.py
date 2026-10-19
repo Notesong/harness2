@@ -234,6 +234,10 @@ def _check_identity(adapter, args, namespace_dir: Path) -> None:
     local = profile_identity(os.environ)
     if local is not None:
         identity["local_profile"] = local
+    from ..profile_runtime import snapshot_identity
+
+    if pinned := snapshot_identity(os.environ):
+        identity["profile"] = pinned
     namespace_dir.mkdir(parents=True, exist_ok=True)
     path = namespace_dir / "config.json"
     if path.is_file():

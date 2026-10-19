@@ -85,6 +85,10 @@ installing Python 3.12. It opens **Harness² Studio** in your browser, with a fr
 demo, model setup, experiment controls, live logs, and result files. See the
 [Studio guide](docs/UI.md) and [local model guide](docs/LOCAL_MODELS.md).
 
+Studio's **Profiles** keep each model's configurations, harness ancestry,
+experience, and run history independent. Candidates can be tested without
+adoption, simplified, retired, or explicitly borrowed; see [model profiles](docs/PROFILES.md).
+
 Use **Windows or Linux, Python 3.12, and [uv](https://docs.astral.sh/uv/getting-started/installation/)**.
 On Windows, run these commands in PowerShell from the repository root:
 

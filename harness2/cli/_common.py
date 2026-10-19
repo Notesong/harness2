@@ -46,6 +46,8 @@ def make_adapter(
     bench: str, subset: str | None, substrate: str, split_file: Path | None = None
 ) -> BenchmarkAdapter:
     """The one place a CLI turns (--bench, --subset, --substrate) into an adapter."""
+    from ..profile_runtime import apply_profile
+
     if bench not in BENCHES:
         raise ValueError(f"unknown bench {bench!r}; expected one of {BENCHES}")
     if substrate not in SUBSTRATES:
@@ -55,16 +57,16 @@ def make_adapter(
             raise ValueError(f"--bench wb needs --subset from {WB_SUBSETS}, got {subset!r} ")
         from ..benchmarks.workbuddy import WbAdapter
 
-        return WbAdapter(subset, substrate=substrate, split_file=split_file)
+        return apply_profile(WbAdapter(subset, substrate=substrate, split_file=split_file))
     if subset:
         raise ValueError(f"--subset applies to --bench wb only, got {subset!r} for {bench}")
     if bench == "jb":
         from ..benchmarks.jobbench import JobBenchAdapter
 
-        return JobBenchAdapter(substrate=substrate, split_file=split_file)
+        return apply_profile(JobBenchAdapter(substrate=substrate, split_file=split_file))
     from ..benchmarks.lab import LabAdapter
 
-    return LabAdapter(substrate=substrate, split_file=split_file)
+    return apply_profile(LabAdapter(substrate=substrate, split_file=split_file))
 
 
 def runs_root_for(adapter: BenchmarkAdapter) -> Path:

@@ -178,6 +178,10 @@ def main(argv: list[str] | None = None) -> int:
             raise SystemExit("Judge endpoint changed for this experiment; choose a new HARNESS2_RUNS_DIR")
         try:
             check_profile_identity(recorded, os.environ)
+            from ..profile_runtime import snapshot_identity
+
+            if recorded.get("profile") != snapshot_identity(os.environ):
+                raise ValueError("The pinned model profile changed for this experiment.")
         except ValueError as exc:
             raise SystemExit(str(exc)) from exc
     if not ns_dir.is_dir():

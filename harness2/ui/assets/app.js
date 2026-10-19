@@ -3,7 +3,7 @@
 (() => {
   const $ = (selector) => document.querySelector(selector);
   const $$ = (selector) => [...document.querySelectorAll(selector)];
-  const views = { overview: "Home", new: "New experiment", runs: "Runs", setup: "Setup" };
+  const views = { overview: "Home", new: "New experiment", profiles: "Profiles", runs: "Runs", setup: "Setup" };
   const statusLabels = { starting: "Starting", running: "Running", succeeded: "Complete", failed: "Failed", partial: "Needs attention", exception: "Failed", cancelled: "Stopped", interrupted: "Interrupted", pending: "Waiting", completed: "Complete", complete: "Complete", skipped: "Skipped" };
   const kindLabels = { demo: "Free demo", benchmark: "Experiment", check: "Environment check", setup: "Benchmark setup", preview: "Experiment plan", judge: "Evaluation", report: "Report", authenticate: "Authentication" };
   const settingsFields = { local_url: "local-url", local_model: "local-model", local_context: "local-context", local_output: "local-output", local_runtime: "local-runtime", local_executable: "local-executable", local_weights: "local-weights", project: "project", region: "region", solver: "solver", improver: "improver", judge: "judge", codex_url: "codex-url", codex_model: "codex-model" };
@@ -31,6 +31,14 @@
   let followingLog = true;
   const openTasks = new Set();
   const taskSelections = new Map();
+  const profileCache = new Map();
+  let selectedProfileId = null;
+  let profileListSignature = "";
+  let profileDetailSignature = "";
+  let profileLoadingId = null;
+  let profileBusy = false;
+  let runProfileSignature = "";
+  let experimentChoiceProfileId = null;
 
   function remember(key, value) { try { sessionStorage.setItem(key, value); } catch (_) { /* Session storage can be disabled. */ } }
   function recalled(key) { try { return sessionStorage.getItem(key); } catch (_) { return null; } }
@@ -43,6 +51,7 @@
     token = recalled("harness2_token") || "";
   }
   selectedId = recalled("harness2_selected_job");
+  selectedProfileId = recalled("harness2_selected_profile");
 
   function element(tag, className, text) {
     const result = document.createElement(tag);
@@ -53,6 +62,7 @@
   function text(selector, value) { $(selector).textContent = value === undefined || value === null ? "" : String(value); }
   function human(value) { return String(value || "").replace(/[-_]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()); }
   function count(value) { const n = Number(value); return Number.isFinite(n) ? n.toLocaleString() : "—"; }
+  function counted(value, singular, plural = `${singular}s`) { return `${count(value)} ${Number(value) === 1 ? singular : plural}`; }
   function when(value) {
     if (!value) return "";
     const date = new Date(value);
@@ -123,6 +133,10 @@
     }
     if (next === "runs" && selectedId) loadDetail(true);
     if (next === "new") renderPlan();
+    if (next === "profiles") {
+      renderProfiles();
+      if (changed && selectedProfileId && profileLoadingId !== selectedProfileId) loadProfile(selectedProfileId, { force: true });
+    }
   }
 
   function providerLabel(settings = state?.settings) {
@@ -149,8 +163,15 @@
   function benchmarkParams(id) {
     return id.startsWith("wb-") ? { benchmark: "wb", subset: id.slice(3) } : { benchmark: id, subset: null };
   }
+  function experimentProfile() { return profileCache.get($("#experiment-profile").value) || null; }
+  function experimentSettings(params = {}) {
+    const profile = params.profile_id ? profileCache.get(params.profile_id) : experimentProfile();
+    const configurationId = params.profile_configuration_id || ($("#experiment-profile").value === profile?.id ? $("#experiment-configuration").value : "") || profile?.active_configuration_id;
+    const configuration = profile?.configurations?.find((item) => item.id === configurationId);
+    return configuration?.snapshot?.settings || state?.settings;
+  }
   function localProfileProblem(params) {
-    if (state?.settings?.provider !== "local") return "";
+    if (experimentSettings(params)?.provider !== "local") return "";
     if (params.substrate !== "oc" || params.benchmark !== "jb") return "The complete local pipeline currently supports JobBench with OpenCode. LAB needs a separately configured judge; Codex and WorkBuddy need their own runner connection.";
     return "";
   }
@@ -230,11 +251,14 @@
     const taskCount = Number.isFinite(available) ? Math.min(requested, available) : requested;
     const branches = Number($("#branches").value) || 1;
     const workers = Number($("#workers").value) || 1;
-    text("#plan-provider", providerLabel());
+    const profile = experimentProfile();
+    const revision = profile?.revisions?.find((item) => item.id === $("#experiment-revision").value);
+    text("#plan-provider", providerLabel(experimentSettings()));
+    text("#plan-starting-point", profile ? `${profile.name} · ${revision?.label || "choose an active harness"}` : "Current baseline");
     text("#plan-description", benchmark && domain ? `${benchmark.name} · ${human(domain.id)}. Work through up to ${count(taskCount)} task${taskCount === 1 ? "" : "s"}, exploring ${branches} branch${branches === 1 ? "" : "es"} per step. Tasks stay in order within each domain; the limit is ${workers} parallel domain${workers === 1 ? "" : "s"}.` : "Prepare a benchmark, then choose one domain for a focused first experiment.");
     text("#domain-help", domain ? `${count(domain.count)} tasks available in this domain. Your experiment will use up to ${count(taskCount)}.` : "Select one domain to keep the first experiment focused.");
     const localNote = $("#local-profile-note");
-    localNote.hidden = state?.settings?.provider !== "local";
+    localNote.hidden = experimentSettings()?.provider !== "local";
     localNote.textContent = localProfileProblem({ benchmark: benchmark?.id?.startsWith("wb-") ? "wb" : benchmark?.id, substrate: $("#substrate").value }) || "The complete local pipeline supports JobBench with OpenCode. Other benchmarks and runners need additional configuration.";
   }
   function formParams() {
@@ -242,7 +266,15 @@
     const id = $("#benchmark").value;
     const benchmark = state?.benchmarks?.find((item) => item.id === id);
     if (!benchmark?.installed || !$("#domain").value) { toast("Prepare a benchmark in Setup before starting.", true); return null; }
-    return { ...benchmarkParams(id), substrate: $("#substrate").value, k: Number($("#branches").value), mode: $("#mode").value, domains: [$("#domain").value], max_tasks: Number($("#max-tasks").value), workers: Number($("#workers").value), pipeline: true };
+    const profileId = $("#experiment-profile").value;
+    const profile = experimentProfile();
+    const configurationId = $("#experiment-configuration").value;
+    const revisionId = $("#experiment-revision").value;
+    if (profileId && (!profile?.configurations?.some((configuration) => configuration.id === configurationId) || !profile?.revisions?.some((revision) => revision.id === revisionId))) {
+      toast("Choose this run’s configuration and harness from the profile before starting.", true);
+      return null;
+    }
+    return { ...benchmarkParams(id), substrate: $("#substrate").value, k: Number($("#branches").value), mode: $("#mode").value, domains: [$("#domain").value], max_tasks: Number($("#max-tasks").value), workers: Number($("#workers").value), pipeline: true, ...(profileId ? { profile_id: profileId, profile_configuration_id: configurationId, profile_revision_id: revisionId } : {}) };
   }
 
   function renderRecent() {
@@ -347,6 +379,608 @@
     $("#improver").value = `local/${model}`;
     $("#judge").value = model;
   }
+
+  function profileButton(label, action, className = "button secondary small") {
+    const button = element("button", className, label);
+    button.type = "button";
+    button.disabled = profileBusy;
+    button.addEventListener("click", action);
+    return button;
+  }
+  function profileInput(form, label, name, options = {}) {
+    const id = `profile-field-${name}`;
+    const caption = element("label", "", label);
+    caption.htmlFor = id;
+    const input = element(options.multiline ? "textarea" : "input");
+    input.id = id;
+    input.name = name;
+    input.required = Boolean(options.required);
+    input.maxLength = options.multiline ? 4000 : 200;
+    if (options.multiline) input.rows = 3;
+    if (options.placeholder) input.placeholder = options.placeholder;
+    form.append(caption, input);
+    return input;
+  }
+  function profileSection(title, description) {
+    const section = element("section", "profile-section");
+    section.append(element("h3", "", title));
+    if (description) section.append(element("p", "field-help", description));
+    return section;
+  }
+  function evidenceBadge(value) {
+    const known = ["observed", "suspected", "replicated", "transferred"];
+    const status = known.includes(value) ? value : "unclassified";
+    return element("span", `evidence-badge evidence-${status}`, human(status));
+  }
+  function revisionFiles(revision) {
+    const tree = revision?.tree;
+    const files = revision?.files || tree?.files || tree || {};
+    if (Array.isArray(files)) return files.map((file) => typeof file === "string" ? file : file?.path || file?.name).filter((file) => typeof file === "string");
+    return files && typeof files === "object" ? Object.keys(files).filter((file) => typeof files[file] === "string" || files[file]?.content !== undefined) : [];
+  }
+  function revisionLabel(profile, id) {
+    return profile.revisions?.find((revision) => revision.id === id)?.label || id || "Unrecorded";
+  }
+  function profileSummary(profile) {
+    return { id: profile.id, name: profile.name, description: profile.description,
+      active_configuration_id: profile.active_configuration_id, active_revision_id: profile.active_revision_id,
+      configuration_count: profile.configurations?.length || 0, revision_count: profile.revisions?.length || 0,
+      run_count: profile.runs?.length || 0, notes_count: profile.notes?.length || 0 };
+  }
+  function cacheProfile(result) {
+    const profile = result.profile || result;
+    if (!profile?.id) throw new Error("The profile could not be read. Refresh the workspace and try again.");
+    profileCache.set(profile.id, profile);
+    if (state) state.profiles = [...(state.profiles || []).filter((item) => item.id !== profile.id), profileSummary(profile)];
+    return profile;
+  }
+  async function loadProfile(id, { render = true, force = false } = {}) {
+    if (!id) return null;
+    if (!force && profileCache.has(id)) {
+      if (render && id === selectedProfileId) renderProfileDetail(profileCache.get(id));
+      return profileCache.get(id);
+    }
+    if (render) profileLoadingId = id;
+    try {
+      const profile = cacheProfile(await api(`/api/profiles/${encodeURIComponent(id)}`));
+      if (render && id === selectedProfileId) renderProfileDetail(profile);
+      if (id === $("#experiment-profile").value) renderExperimentProfile();
+      return profile;
+    } catch (error) {
+      toast(error.message, true);
+      if (render && id === selectedProfileId) $("#profile-detail").replaceChildren(empty("This profile is unavailable.", error.message, true));
+      return null;
+    } finally { if (profileLoadingId === id) profileLoadingId = null; }
+  }
+  async function profileAction(id, operation, body, success) {
+    if (profileBusy) return null;
+    profileBusy = true;
+    $$("#view-profiles button, #run-profile-capture button").forEach((button) => { button.disabled = true; });
+    try {
+      const profile = cacheProfile(await api(`/api/profiles/${encodeURIComponent(id)}/${operation}`, { method: "POST", body }));
+      profileListSignature = "";
+      profileDetailSignature = "";
+      profileBusy = false;
+      renderProfiles();
+      if (profile.id === selectedProfileId) renderProfileDetail(profile);
+      renderExperimentProfile();
+      if (selectedJob) renderRunProfileCapture(selectedJob, true);
+      toast(success);
+      return profile;
+    } catch (error) { toast(error.message, true); return null; }
+    finally {
+      profileBusy = false;
+      $$("#view-profiles button, #run-profile-capture button").forEach((button) => { button.disabled = false; });
+    }
+  }
+  function selectProfile(id) {
+    selectedProfileId = id;
+    remember("harness2_selected_profile", id);
+    profileListSignature = "";
+    profileDetailSignature = "";
+    renderProfiles();
+    showView("profiles");
+    loadProfile(id, { force: true });
+  }
+  function renderProfiles() {
+    if (!state) return;
+    const profiles = [...(state.profiles || [])].sort((a, b) => a.name.localeCompare(b.name));
+    if (!profiles.some((profile) => profile.id === selectedProfileId)) selectedProfileId = profiles[0]?.id || null;
+    const signature = JSON.stringify([profiles, selectedProfileId]);
+    if (profileListSignature !== signature) {
+      profileListSignature = signature;
+      $("#profile-list").replaceChildren(...profiles.map((profile) => {
+        const button = profileButton(profile.name, () => selectProfile(profile.id), `profile-list-item${profile.id === selectedProfileId ? " selected" : ""}`);
+        button.replaceChildren(element("strong", "", profile.name), element("small", "", `${counted(profile.revision_count, "revision")} · ${counted(profile.run_count, "run")}`));
+        if (profile.id === selectedProfileId) button.setAttribute("aria-current", "true");
+        return button;
+      }));
+      if (!profiles.length) $("#profile-list").append(element("p", "field-help", "Create a profile to begin its own history."));
+      if (!profiles.length) $(".profile-create-panel").open = true;
+      const select = $("#experiment-profile");
+      const previous = select.value;
+      select.replaceChildren(element("option", "", "Use Setup settings · no continuing profile"), ...profiles.map((profile) => {
+        const option = element("option", "", profile.name);
+        option.value = profile.id;
+        return option;
+      }));
+      select.firstElementChild.value = "";
+      select.value = profiles.some((profile) => profile.id === previous) ? previous : "";
+      renderExperimentProfile();
+    }
+    if (view === "profiles" && selectedProfileId) {
+      const profile = profileCache.get(selectedProfileId);
+      const summary = profiles.find((item) => item.id === selectedProfileId);
+      const fresh = profile && summary && ["active_configuration_id", "active_revision_id", "configuration_count", "revision_count", "run_count", "notes_count"].every((key) => summary[key] === undefined || profileSummary(profile)[key] === summary[key]);
+      if (profile && fresh) renderProfileDetail(profile);
+      else if (profileLoadingId !== selectedProfileId) loadProfile(selectedProfileId, { force: true });
+    }
+  }
+  function renderExperimentProfile() {
+    const id = $("#experiment-profile").value;
+    const profile = profileCache.get(id);
+    let help = "Choose a profile to carry its own configuration and harness into this run.";
+    $("#experiment-profile-choices").hidden = !id;
+    if (id && !profile) {
+      help = "Loading this profile’s starting point…";
+      loadProfile(id, { render: false });
+    } else if (profile) {
+      const sameProfile = experimentChoiceProfileId === id;
+      const configurations = profile.configurations || [];
+      const revisions = profile.revisions || [];
+      const previousConfiguration = sameProfile ? $("#experiment-configuration").value : "";
+      const previousRevision = sameProfile ? $("#experiment-revision").value : "";
+      const configurationSelect = $("#experiment-configuration");
+      const revisionSelect = $("#experiment-revision");
+      configurationSelect.replaceChildren(...configurations.map((item) => {
+        const option = element("option", "", `${item.label || item.id}${item.id === profile.active_configuration_id ? " · active" : ""}`);
+        option.value = item.id;
+        return option;
+      }));
+      revisionSelect.replaceChildren(...revisions.map((item) => {
+        const lifecycle = item.retired ? "retired" : item.id === profile.active_revision_id ? "active" : "candidate";
+        const option = element("option", "", `${item.label || item.id} · ${lifecycle}`);
+        option.value = item.id;
+        return option;
+      }));
+      configurationSelect.value = configurations.some((item) => item.id === previousConfiguration) ? previousConfiguration : profile.active_configuration_id || configurations[0]?.id || "";
+      revisionSelect.value = revisions.some((item) => item.id === previousRevision) ? previousRevision : profile.active_revision_id || revisions[0]?.id || "";
+      configurationSelect.disabled = !configurations.length;
+      revisionSelect.disabled = !revisions.length;
+      const configuration = configurations.find((item) => item.id === configurationSelect.value);
+      const revision = revisions.find((item) => item.id === revisionSelect.value);
+      help = configuration && revision ? `${configuration.label} · ${revision.label}. This choice tests the selected harness without changing the profile’s active harness. The run saves its exact starting point.` : "Capture a configuration and create a harness revision in Profiles before starting this experiment.";
+    }
+    experimentChoiceProfileId = id || null;
+    text("#experiment-profile-help", help);
+    renderPlan();
+  }
+  function profileForm(section, label, operation, buildBody, success) {
+    const form = element("form", "profile-form");
+    const submit = element("button", "button secondary small profile-submit", label);
+    submit.type = "submit";
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      if (!form.reportValidity()) return;
+      const body = buildBody();
+      if (body) profileAction(selectedProfileId, operation, body, success);
+    });
+    section.append(form);
+    return { form, submit };
+  }
+  function renderProfileDetail(profile) {
+    const signature = JSON.stringify([profile, (state?.jobs || []).filter((job) => job.kind === "benchmark" && ["succeeded", "partial"].includes(job.status)).map((job) => [job.id, job.status])]);
+    if (profileDetailSignature === signature) return;
+    profileDetailSignature = signature;
+    const wrap = $("#profile-detail");
+    const heading = element("header", "profile-heading");
+    const title = element("div");
+    title.append(element("span", "eyebrow", "A CONTINUING IDENTITY"), element("h2", "", profile.name));
+    if (profile.description) title.append(element("p", "muted", profile.description));
+    const start = profileButton("New experiment ↗", () => {
+      $("#experiment-profile").value = profile.id;
+      renderExperimentProfile();
+      showView("new");
+    }, "button primary small");
+    heading.append(title, start);
+    const note = element("p", "profile-continuity-note", "Experiments take a recorded snapshot. Changing the active configuration or harness affects future runs; the history stays intact.");
+    const configurations = renderProfileConfigurations(profile);
+    const revisions = renderProfileRevisions(profile);
+    const ideas = renderProfileNotes(profile);
+    const ancestry = renderProfileHistory(profile);
+    wrap.replaceChildren(heading, note, configurations, revisions, ideas, ancestry);
+  }
+  function renderProfileConfigurations(profile) {
+    const section = profileSection("Configurations", "Immutable snapshots of the model, runtime, budgets, and roles. Save any Setup changes before capturing one.");
+    for (const configuration of profile.configurations || []) {
+      const card = element("details", "profile-card");
+      const summary = element("summary");
+      summary.append(element("strong", "", configuration.label || configuration.id));
+      if (configuration.id === profile.active_configuration_id) summary.append(element("span", "lifecycle-badge active", "Active"));
+      const settings = configuration.snapshot?.settings || {};
+      const body = element("div", "profile-card-body");
+      body.append(element("p", "field-help", [providerLabel(settings), settings.local_context ? `${count(settings.local_context)} context · ${count(settings.local_output)} output` : ""].filter(Boolean).join(" · ")));
+      body.append(element("pre", "profile-snapshot", JSON.stringify(configuration.snapshot || {}, null, 2)));
+      if (configuration.id !== profile.active_configuration_id) body.append(profileButton("Use for future runs", () => profileAction(profile.id, "activate", { configuration_id: configuration.id, why: `Selected configuration: ${configuration.label || configuration.id}` }, "Active configuration changed for future runs.")));
+      card.append(summary, body);
+      section.append(card);
+    }
+    if (!(profile.configurations || []).length) section.append(element("p", "field-help", "No configuration captured yet. Connect the model in Setup, then save its identity here."));
+    const { form, submit } = profileForm(section, "Capture saved Setup", "configurations", () => ({ label: label.value.trim() }), "Configuration captured. Choose it when you’re ready to use it.");
+    const label = profileInput(form, "Configuration name", "configuration-label", { required: true, placeholder: "e.g. Q3 · 64K · reasoning off" });
+    form.append(submit, element("p", "field-help", "Capturing file identities may take a few seconds. This does not load the model."));
+    return section;
+  }
+  function renderProfileRevisions(profile) {
+    const section = profileSection("Harness ancestry", "Each candidate keeps its parents, borrowed material, and reason for changing. Active means selected for future work; evidence describes what has actually been demonstrated.");
+    const revisions = profile.revisions || [];
+    for (const revision of revisions) {
+      const card = element("details", "profile-card revision-card");
+      card.id = `profile-revision-${revision.id}`;
+      card.open = revision.id === profile.active_revision_id;
+      const summary = element("summary");
+      summary.append(element("strong", "", revision.label || revision.id));
+      const lifecycle = revision.retired ? "Retired" : revision.id === profile.active_revision_id ? "Active" : "Candidate";
+      summary.append(element("span", `lifecycle-badge ${lifecycle.toLowerCase()}`, lifecycle));
+      const body = element("div", "profile-card-body");
+      const evidence = revision.evidence_status || revision.evidence?.status || (Array.isArray(revision.evidence) ? revision.evidence.find((item) => item?.evidence_status)?.evidence_status : null) || (typeof revision.evidence === "string" ? revision.evidence : revision.operation === "import" ? "suspected" : null);
+      body.append(evidenceBadge(evidence));
+      if (revision.domain) body.append(element("span", "soft-tag", human(revision.domain)));
+      if (revision.why) body.append(element("p", "profile-reason", revision.why));
+      const parents = revision.parents || [];
+      const lineage = element("div", "revision-lineage");
+      if (!parents.length) lineage.append(element("p", "field-help", "Starting point · no parent revision"));
+      else {
+        lineage.append(element("span", "field-help", "Descends from "));
+        for (const parent of parents) {
+          const id = typeof parent === "string" ? parent : parent.revision_id || parent.id;
+          lineage.append(profileButton(revisionLabel(profile, id), () => {
+            const node = document.getElementById(`profile-revision-${id}`);
+            if (node) { node.open = true; node.scrollIntoView({ behavior: "smooth", block: "nearest" }); }
+          }, "text-button"));
+        }
+      }
+      for (const borrowed of revision.borrowed_from || []) {
+        const ref = typeof borrowed === "string" ? borrowed : [borrowed.profile_name || borrowed.profile_id, borrowed.revision_id || borrowed.id, borrowed.component || borrowed.path].filter(Boolean).join(" / ");
+        lineage.append(element("p", "field-help", `Borrowed as a hypothesis: ${ref}`));
+      }
+      body.append(lineage);
+      if (revision.motivated_by?.length) body.append(element("p", "field-help", `Motivated by: ${revision.motivated_by.map((item) => typeof item === "string" ? item : JSON.stringify(item)).join(" · ")}`));
+      if (revision.evidence && typeof revision.evidence === "object") {
+        const details = element("details", "profile-evidence");
+        details.append(element("summary", "", "Read the supporting evidence"), element("pre", "profile-snapshot", JSON.stringify(revision.evidence, null, 2)));
+        body.append(details);
+      }
+      if (revision.experience && Object.keys(revision.experience).length) {
+        const experience = element("details", "profile-evidence");
+        experience.append(element("summary", "", "Experience carried by this revision"));
+        for (const [key, value] of Object.entries(revision.experience)) experience.append(element("h4", "", human(key)), element("p", "profile-reason", value));
+        body.append(experience);
+      }
+      const paths = revisionFiles(revision);
+      body.append(element("p", "field-help", `${counted(paths.length, "harness file")} · ${human(revision.operation || "revision")}`));
+      if (paths.length) {
+        const files = element("details", "profile-files");
+        files.append(element("summary", "", "Harness files"));
+        for (const file of paths) {
+          const contents = revision.tree?.[file];
+          if (typeof contents === "string") {
+            const preview = element("details", "output-preview");
+            preview.append(element("summary", "", file), element("pre", "", contents));
+            files.append(preview);
+          } else files.append(element("p", "field-help", file));
+        }
+        body.append(files);
+      }
+      const actions = element("div", "profile-actions");
+      actions.append(profileButton("Try this revision ↗", () => {
+        $("#experiment-profile").value = profile.id;
+        renderExperimentProfile();
+        $("#experiment-revision").value = revision.id;
+        renderExperimentProfile();
+        showView("new");
+      }));
+      if (revision.id !== profile.active_revision_id) actions.append(profileButton(revision.retired ? "Restore for future runs" : "Use for future runs", () => profileAction(profile.id, "activate", { revision_id: revision.id, why: `${revision.retired ? "Restored" : "Selected"} harness: ${revision.label || revision.id}` }, "Active harness changed. Existing runs keep their starting point.")));
+      body.append(actions);
+      if (!revision.retired) {
+        const retirement = element("details", "profile-toolbox");
+        retirement.append(element("summary", "", "Retire this revision"), element("p", "field-help", revision.id === profile.active_revision_id ? "Retiring the active harness leaves this profile without an active harness until you select another. Existing runs stay pinned." : "Keep the history while taking this candidate out of current consideration. You can restore it later."));
+        const label = element("label", "", "Reason for retirement");
+        label.htmlFor = `retire-${revision.id}`;
+        const retireReason = element("textarea");
+        retireReason.id = label.htmlFor;
+        retireReason.rows = 2;
+        retireReason.maxLength = 4000;
+        retirement.append(label, retireReason, profileButton("Retire revision", () => {
+          const why = retireReason.value.trim();
+          if (!why) { retireReason.focus(); toast("Add a reason before retiring this revision.", true); return; }
+          profileAction(profile.id, "retire", { revision_id: revision.id, why }, "Revision retired. Its files and ancestry remain in history.");
+        }, "button secondary small profile-submit"));
+        body.append(retirement);
+      }
+      if (paths.length) body.append(renderSimplification(profile, revision, paths));
+      card.append(summary, body);
+      section.append(card);
+    }
+    const fresh = element("details", "profile-toolbox");
+    fresh.open = !revisions.length;
+    fresh.append(element("summary", "", "Start from a clean baseline"));
+    fresh.append(element("p", "field-help", "The bundled JobBench / OpenCode baseline starts this profile independently. It copies no learned changes from another profile."));
+    const { form, submit } = profileForm(fresh, "Create baseline candidate", "baseline", () => ({ label: baseline.value.trim() }), "Clean baseline saved as a candidate. It has not been activated.");
+    const baseline = profileInput(form, "Baseline name", "baseline-label", { required: true, placeholder: "Original baseline" });
+    form.append(submit);
+    section.append(fresh, renderProfileBorrowing(profile), renderProfileRunImport(profile));
+    return section;
+  }
+  function renderSimplification(profile, revision, paths) {
+    const details = element("details", "profile-toolbox");
+    details.append(element("summary", "", "Try a smaller harness"), element("p", "field-help", "Choose files to remove in a new candidate. The source revision stays intact; compare the candidate before adopting it."));
+    const chosen = [];
+    const { form, submit } = profileForm(details, "Save smaller candidate", "revisions", () => {
+      const remove = chosen.filter((input) => input.checked).map((input) => input.value);
+      if (!remove.length) { toast("Choose at least one file to remove.", true); return null; }
+      return { parent_id: revision.id, label: label.value.trim(), why: why.value.trim(), remove_paths: remove, ...(origin.value.trim() ? { motivated_by: [origin.value.trim()] } : {}) };
+    }, "Smaller candidate saved for comparison. The active harness is unchanged.");
+    const label = profileInput(form, "Candidate name", `smaller-label-${revision.id}`, { required: true });
+    const why = profileInput(form, "What might be unnecessary?", `smaller-why-${revision.id}`, { required: true, multiline: true });
+    const origin = profileInput(form, "Origin or conversation reference (optional)", `smaller-origin-${revision.id}`, { placeholder: "e.g. Progress-state discussion · 20 October" });
+    const choices = element("fieldset", "profile-file-choices");
+    choices.append(element("legend", "", "Remove from the candidate"));
+    for (const path of paths) {
+      const line = element("label", "profile-checkbox");
+      const check = element("input");
+      check.type = "checkbox";
+      check.value = path;
+      chosen.push(check);
+      line.append(check, element("span", "", path));
+      choices.append(line);
+    }
+    form.append(choices, submit);
+    return details;
+  }
+  function renderProfileBorrowing(profile) {
+    const details = element("details", "profile-toolbox");
+    details.append(element("summary", "", "Borrow from another profile"), element("p", "field-help", "An explicit import creates an independent candidate marked as a hypothesis. It does not activate it or change the source profile."));
+    const sources = (state?.profiles || []).filter((item) => item.id !== profile.id);
+    if (!sources.length) { details.append(element("p", "field-help", "Other profiles will appear here when you create them.")); return details; }
+    const { form, submit } = profileForm(details, "Import as a hypothesis", "import", () => {
+      if (!source.value || !revision.value) { toast("Choose a source profile and revision first.", true); return null; }
+      return { source_profile_id: source.value, revision_id: revision.value, why: why.value.trim() };
+    }, "Borrowed revision saved as a hypothesis. Test it before adoption.");
+    const sourceLabel = element("label", "", "Source profile");
+    sourceLabel.htmlFor = "profile-borrow-source";
+    const source = element("select");
+    source.id = sourceLabel.htmlFor;
+    const blank = element("option", "", "Choose another profile");
+    blank.value = "";
+    source.append(blank, ...sources.map((item) => { const option = element("option", "", item.name); option.value = item.id; return option; }));
+    source.required = true;
+    const revisionLabelNode = element("label", "", "Reference revision");
+    revisionLabelNode.htmlFor = "profile-borrow-revision";
+    const revision = element("select");
+    revision.id = revisionLabelNode.htmlFor;
+    revision.required = true;
+    revision.disabled = true;
+    form.append(sourceLabel, source, revisionLabelNode, revision);
+    source.addEventListener("change", async () => {
+      revision.replaceChildren();
+      revision.disabled = true;
+      const id = source.value;
+      const other = await loadProfile(id, { render: false, force: true });
+      if (source.value !== id || !other) return;
+      revision.replaceChildren(...(other.revisions || []).map((item) => {
+        const option = element("option", "", `${item.label || item.id}${item.retired ? " · retired" : ""}`);
+        option.value = item.id;
+        return option;
+      }));
+      revision.disabled = !(other.revisions || []).length;
+    });
+    const why = profileInput(form, "Why might this help this profile?", "borrow-why", { required: true, multiline: true });
+    form.append(submit);
+    return details;
+  }
+  function renderProfileRunImport(profile) {
+    const details = element("details", "profile-toolbox");
+    details.append(element("summary", "", "Keep a candidate from a completed run"), element("p", "field-help", "Import the selected harness and its recorded evidence. A run’s selection does not establish an improvement over baseline."));
+    const jobs = (state?.jobs || []).filter((job) => job.kind === "benchmark" && ["succeeded", "partial"].includes(job.status));
+    if (!jobs.length) { details.append(element("p", "field-help", "Completed benchmark runs will appear here.")); return details; }
+    let choices = [];
+    const { form, submit } = profileForm(details, "Save run candidate", "from-run", () => {
+      const choice = choices[Number(selection.value)];
+      if (!choice) { toast("Choose a completed task selection first.", true); return null; }
+      return { job_id: run.value, label: label.value.trim(), why: why.value.trim(), task_id: choice.task_id, mode: choice.mode };
+    }, "Run candidate saved with its evidence. The active harness is unchanged.");
+    const caption = element("label", "", "Completed run");
+    caption.htmlFor = "profile-import-run";
+    const run = element("select");
+    run.id = caption.htmlFor;
+    run.required = true;
+    run.append(...jobs.map((job) => { const option = element("option", "", job.title || job.id); option.value = job.id; return option; }));
+    form.append(caption, run);
+    const selectionLabel = element("label", "", "Selected harness from the run");
+    selectionLabel.htmlFor = "profile-import-selection";
+    const selection = element("select");
+    selection.id = selectionLabel.htmlFor;
+    selection.required = true;
+    selection.disabled = true;
+    form.append(selectionLabel, selection);
+    const loadSelections = async () => {
+      const jobId = run.value;
+      selection.replaceChildren();
+      selection.disabled = true;
+      submit.disabled = true;
+      choices = [];
+      try {
+        const job = await api(`/api/jobs/${encodeURIComponent(jobId)}`);
+        if (run.value !== jobId) return;
+        choices = runHarnessChoices(job);
+        fillRunHarnessChoices(selection, choices);
+        submit.disabled = !choices.length;
+      } catch (error) { toast(error.message, true); }
+    };
+    run.addEventListener("change", loadSelections);
+    const label = profileInput(form, "Candidate name", "run-candidate-label", { required: true });
+    const why = profileInput(form, "Why keep this candidate?", "run-candidate-why", { required: true, multiline: true });
+    form.append(submit);
+    if (run.value) loadSelections();
+    return details;
+  }
+  function runHarnessChoices(job) {
+    return (job.tasks || []).flatMap((task) => (task.selections || []).filter((selection) => selection.label).map((selection) => ({
+      task_id: task.id, mode: selection.mode === "parallel" ? "agg" : selection.mode === "sequential" ? "seq" : selection.mode,
+      label: `${task.id} · ${human(selection.mode)} · ${selection.label}`,
+    })));
+  }
+  function fillRunHarnessChoices(select, choices) {
+    select.replaceChildren(...choices.map((choice, index) => {
+      const option = element("option", "", choice.label);
+      option.value = String(index);
+      return option;
+    }));
+    if (!choices.length) {
+      const option = element("option", "", "No completed harness selections available");
+      option.value = "";
+      select.append(option);
+    }
+    select.value = choices.length ? "0" : "";
+    select.disabled = !choices.length;
+  }
+  function renderProfileNotes(profile) {
+    const section = profileSection("Observations & hypotheses", "Record what happened separately from what you think it means. Evidence labels do not activate a harness.");
+    for (const note of profile.notes || []) {
+      const article = element("article", "profile-note");
+      article.append(evidenceBadge(note.evidence_status), element("p", "", note.text), element("small", "muted", when(note.created_at || note.time)));
+      if (note.motivated_by?.length) article.append(element("p", "field-help", `Motivated by: ${note.motivated_by.map((item) => typeof item === "string" ? item : JSON.stringify(item)).join(" · ")}`));
+      section.append(article);
+    }
+    const { form, submit } = profileForm(section, "Keep this note", "notes", () => ({ text: entry.value.trim(), evidence_status: status.value, ...(origin.value.trim() ? { motivated_by: [origin.value.trim()] } : {}) }), "Note added to this profile’s history.");
+    const entry = profileInput(form, "A useful observation or unresolved question", "note-text", { required: true, multiline: true });
+    const origin = profileInput(form, "Origin or conversation reference (optional)", "note-origin", { placeholder: "Enough to remember why the idea arose" });
+    const label = element("label", "", "Evidence status");
+    label.htmlFor = "profile-note-status";
+    const status = element("select");
+    status.id = label.htmlFor;
+    for (const [value, title] of [["suspected", "Suspected · a hypothesis to test"], ["observed", "Observed · happened in one run"], ["replicated", "Replicated · repeated under comparable conditions"], ["transferred", "Transferred · helped on a different task"]]) {
+      const option = element("option", "", title);
+      option.value = value;
+      status.append(option);
+    }
+    form.append(label, status, submit);
+    return section;
+  }
+  function renderProfileHistory(profile) {
+    const section = profileSection("History & runs", "An append-only account of changes. Working experiment libraries can evolve without rewriting this archive.");
+    const runs = element("div", "profile-associated-runs");
+    for (const run of profile.runs || []) {
+      const known = (state?.jobs || []).find((job) => job.id === run.job_id);
+      if (known) runs.append(profileButton(run.title || known.title || run.job_id, () => selectJob(run.job_id), "text-button"));
+      else runs.append(element("p", "field-help", run.title || run.output_dir || run.job_id));
+    }
+    if (!(profile.runs || []).length) runs.append(element("p", "field-help", "No runs are attached yet. Start an experiment from this profile to record its ancestry."));
+    section.append(runs);
+    const history = element("ol", "run-timeline profile-history");
+    for (const event of [...(profile.events || [])].reverse()) {
+      const item = element("li");
+      const heading = element("div", "timeline-heading");
+      const date = event.created_at || event.time || event.timestamp;
+      const time = element("time", "", when(date) || "Time not recorded");
+      if (date) time.dateTime = date;
+      const action = event.action || event.kind || event.type || event.operation || "Profile change";
+      heading.append(element("h4", "", event.title || human(action)), time);
+      item.append(heading);
+      const detail = event.detail || event.why || event.description;
+      if (detail) item.append(element("p", "", detail));
+      else if (event.data) {
+        const data = event.data;
+        let description = data.why || data.text || "";
+        if (action === "created") description = `${data.name || profile.name} began this history.`;
+        if (action === "configuration_added") description = `Captured ${profile.configurations?.find((configuration) => configuration.id === data.id)?.label || "a configuration"}.`;
+        if (action === "revision_added") {
+          const revision = profile.revisions?.find((row) => row.id === data.id);
+          description = [revision?.label || "Saved harness candidate", revision?.why].filter(Boolean).join(" · ");
+        }
+        if (action === "activated") description = [description, data.configuration_id ? `Configuration: ${profile.configurations?.find((row) => row.id === data.configuration_id)?.label || data.configuration_id}` : "", data.revision_id ? `Harness: ${revisionLabel(profile, data.revision_id)}` : ""].filter(Boolean).join(" · ");
+        if (action === "retired") description = `${revisionLabel(profile, data.revision_id)} retired. ${description}`;
+        if (action === "run_recorded") description = data.title || data.output_dir || "Run ancestry recorded.";
+        if (description) item.append(element("p", "", description));
+      }
+      history.append(item);
+    }
+    section.append(history);
+    return section;
+  }
+  async function createProfile(event) {
+    event.preventDefault();
+    if (profileBusy || !$("#profile-create-form").reportValidity()) return;
+    profileBusy = true;
+    $("#profile-create").disabled = true;
+    try {
+      const profile = cacheProfile(await api("/api/profiles", { method: "POST", body: { name: $("#profile-name").value.trim(), description: $("#profile-description").value.trim() } }));
+      $("#profile-create-form").reset();
+      profileBusy = false;
+      selectProfile(profile.id);
+      toast(`${profile.name} has an independent starting point.`);
+    } catch (error) { toast(error.message, true); }
+    finally { profileBusy = false; $("#profile-create").disabled = false; }
+  }
+  function renderRunProfileCapture(job, force = false) {
+    let wrap = $("#run-profile-capture");
+    if (!wrap) {
+      wrap = element("div", "run-profile-capture");
+      wrap.id = "run-profile-capture";
+      $("#job-detail-content").append(wrap);
+    }
+    const profiles = state?.profiles || [];
+    const signature = JSON.stringify([job.id, job.status, profiles, job.profile || job.profile_plan || job.profile_binding || job.params]);
+    if (!force && signature === runProfileSignature) return;
+    runProfileSignature = signature;
+    wrap.replaceChildren();
+    const planned = job.kind === "preview";
+    const binding = planned ? job.profile_plan : job.profile || job.profile_binding || job.profile_snapshot;
+    if (binding || job.params?.profile_id) {
+      const info = element("div", "profile-run-binding");
+      const profileId = binding?.profile_id || job.params?.profile_id;
+      const name = profiles.find((profile) => profile.id === profileId)?.name || binding?.profile_name || "Profile";
+      const configurationId = binding?.configuration_id || job.params?.profile_configuration_id || "not recorded";
+      const revisionId = binding?.revision_id || job.params?.profile_revision_id || "not recorded";
+      const explanation = planned ? "The plan uses these choices. Starting an experiment records its own immutable snapshot." : binding ? "Later profile changes do not alter this run." : "These profile identifiers were saved in the run’s parameters.";
+      info.append(element("h3", "", `${name} · ${planned ? "planned" : "recorded"} starting point`), element("p", "field-help", `Configuration ${configurationId} · harness ${revisionId}. ${explanation}`));
+      if (profileId) info.append(profileButton("Open profile ancestry →", () => selectProfile(profileId), "text-button"));
+      wrap.append(info);
+    }
+    if (job.kind !== "benchmark" || !["succeeded", "partial"].includes(job.status) || !profiles.length) return;
+    const details = element("details", "profile-toolbox");
+    details.append(element("summary", "", "Save this run’s harness to a profile"), element("p", "field-help", "Creates a candidate with recorded evidence. Review and activate it separately; completion alone does not prove improvement."));
+    const form = element("form", "profile-form");
+    const caption = element("label", "", "Destination profile");
+    caption.htmlFor = "run-profile-destination";
+    const destination = element("select");
+    destination.id = caption.htmlFor;
+    destination.append(...profiles.map((profile) => { const option = element("option", "", profile.name); option.value = profile.id; return option; }));
+    destination.value = profiles.some((profile) => profile.id === job.params?.profile_id) ? job.params.profile_id : profiles[0].id;
+    form.append(caption, destination);
+    const choices = runHarnessChoices(job);
+    const selectionLabel = element("label", "", "Selected harness to keep");
+    selectionLabel.htmlFor = "run-profile-selection";
+    const selection = element("select");
+    selection.id = selectionLabel.htmlFor;
+    selection.required = true;
+    fillRunHarnessChoices(selection, choices);
+    form.append(selectionLabel, selection);
+    const label = profileInput(form, "Candidate name", "result-label", { required: true, placeholder: "What changed in this run?" });
+    const why = profileInput(form, "Why keep it?", "result-why", { required: true, multiline: true });
+    const submit = element("button", "button secondary small profile-submit", "Save as a candidate");
+    submit.type = "submit";
+    submit.disabled = !choices.length;
+    form.append(submit);
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const choice = choices[Number(selection.value)];
+      if (form.reportValidity() && choice) profileAction(destination.value, "from-run", { job_id: job.id, label: label.value.trim(), why: why.value.trim(), task_id: choice.task_id, mode: choice.mode }, "Harness candidate saved. Open Profiles to review its ancestry.");
+    });
+    details.append(form);
+    wrap.append(details);
+  }
   function renderTools() {
     const tools = state.tools || [];
     const signature = JSON.stringify(tools);
@@ -385,6 +1019,7 @@
     renderTools();
     renderRecent();
     renderJobs();
+    renderProfiles();
     renderPlan();
     updateBusy();
   }
@@ -486,6 +1121,7 @@
     }
     renderStory(job);
     renderTasks(job);
+    renderRunProfileCapture(job);
     const log = $("#job-log");
     const value = job.log || (isActive(job.status) ? "Waiting for output…" : "No output was recorded for this job.");
     if (log.textContent !== value) {
@@ -684,8 +1320,14 @@
     const benchmarkId = params.benchmark === "wb" ? `wb-${params.subset}` : params.benchmark;
     const benchmark = state?.benchmarks?.find((item) => item.id === benchmarkId);
     const executions = ((!params.mode || params.mode === "both") ? 7 : 4) * (params.k || 1);
-    $("#confirm-facts").replaceChildren(element("p", "", `${benchmark?.name || "Experiment"} · ${(params.domains || []).map(human).join(", ") || "Selected domains"}`), element("p", "", `Up to ${params.max_tasks || 1} task(s) per domain · ${params.k || 1} branch(es) · ${params.workers || 1} parallel domain(s)`), element("p", "", `${executions} planned full executions per task, plus harness editing, reflection, and judging. Saved work may reduce this; retries can add work.`), element("p", "", providerLabel()));
-    text("#confirm-compute", state?.settings?.provider === "local" ? state?.settings?.local_runtime === "managed" ? "Your local model loads for this run and unloads after grading and reporting, failure, or stop. You can stop the run from Runs." : "Your local model will use this machine’s computing resources. You can stop the run from Runs." : "This uses your connected provider and may incur charges. You can stop the run from Runs.");
+    const settings = experimentSettings(params);
+    $("#confirm-facts").replaceChildren(element("p", "", `${benchmark?.name || "Experiment"} · ${(params.domains || []).map(human).join(", ") || "Selected domains"}`), element("p", "", `Up to ${params.max_tasks || 1} task(s) per domain · ${params.k || 1} branch(es) · ${params.workers || 1} parallel domain(s)`), element("p", "", `${executions} planned full executions per task, plus harness editing, reflection, and judging. Saved work may reduce this; retries can add work.`), element("p", "", providerLabel(settings)));
+    if (params.profile_id) {
+      const profile = profileCache.get(params.profile_id);
+      const configuration = profile?.configurations?.find((item) => item.id === (params.profile_configuration_id || profile.active_configuration_id));
+      $("#confirm-facts").append(element("p", "", `${profile?.name || "Profile"} · ${configuration?.label || "saved configuration"} · ${revisionLabel(profile || {}, params.profile_revision_id || profile?.active_revision_id)}`), element("p", "", "This exact starting point is saved with the run. Any resulting harness remains a candidate until you choose to activate it."));
+    }
+    text("#confirm-compute", settings?.provider === "local" ? settings?.local_runtime === "managed" ? "Your local model loads for this run and unloads after grading and reporting, failure, or stop. You can stop the run from Runs." : "Your local model will use this machine’s computing resources. You can stop the run from Runs." : "This uses your connected provider and may incur charges. You can stop the run from Runs.");
     text("#confirm-accept", resume ? "Resume run" : "Start experiment");
     dialog.returnValue = "cancel";
     return new Promise((resolve) => {
@@ -874,6 +1516,9 @@
   $("#start-demo").addEventListener("click", () => launch("demo", { k: 2, mode: "both" }));
   $("#onboarding-demo").addEventListener("click", () => launch("demo", { k: 2, mode: "both" }));
   $("#experiment-form").addEventListener("submit", (event) => { event.preventDefault(); const params = formParams(); if (params) launch("benchmark", params, true); });
+  $("#profile-create-form").addEventListener("submit", createProfile);
+  $("#experiment-profile").addEventListener("change", renderExperimentProfile);
+  ["experiment-configuration", "experiment-revision"].forEach((id) => $("#" + id).addEventListener("change", renderExperimentProfile));
   $("#preview-experiment").addEventListener("click", () => { const params = formParams(); if (params) launch("preview", params); });
   $("#benchmark").addEventListener("change", renderDomains);
   ["domain", "substrate", "max-tasks", "workers", "branches", "mode"].forEach((id) => { $(`#${id}`).addEventListener("input", renderPlan); });
