@@ -451,6 +451,42 @@ scripted fixtures, not model-backed profile results. The initial proof script's
 UTF-8 decoder assumption for Windows CP1252 help output was corrected and retained
 in the local verification report; the CLI itself had returned successfully.
 
+### Dormant capability catalog (2026-10-19)
+
+The catalog checkpoint passed the native Windows suite: **278 tests in 82.559s**,
+with the same two explicit platform/privilege skips. All **27 Node UI tests**,
+Ruff, JavaScript syntax, whitespace checks, and 48 third-party asset checks
+passed. Catalog tests exercise real temporary archives, immutable publication,
+explicit exposure gates, pinned context, foreign candidate forks, declared
+ancestry, and authenticated HTTP routes. Model behavior and transfer benefits
+are not established by these fixtures.
+
+Hosted Windows checks of the preceding profile commit exposed path-alias
+assumptions and disagreement in fresh PID lookups after shutdown. Path assertions
+now compare resolved identities. Lifecycle tests retain original native process
+handles: the owned root must already be signaled when shutdown returns, and a
+known live grandchild must terminate within a bounded wait. A fresh numeric PID
+lookup is diagnostic only. Production lifecycle behavior was not changed to
+accommodate those assertions.
+
+The live Studio catalog remains **disabled and empty**, with no profile opted
+in and no catalog events. Real Owen snapshot/context construction received no
+catalog key or directory. Hash comparisons confirmed all **17 saved profile
+JSON records unchanged**. The disabled screen was inspected in the actual
+browser with no error/warning logs. No model server was started.
+
+A fresh offline wheel (461,077 bytes; SHA256
+`7ad9bb2d0bc4b949b5a78165d1a316bd9169e046f0fc573d2aa62b4998d33340`)
+was installed into a new virtual environment and exercised with `-I` outside
+the checkout. All 60 Python files and three UI assets matched the frozen
+production source. Fifty bundled third-party files and eight license files
+were unchanged. An installed synthetic catalog fixture exercised publication,
+profile opt-in, pinned references, a modified inactive fork, and disabling again.
+The deterministic two-task demo completed with 28 executions, 32 scripted editor
+calls, and no failures; resume added zero executions or editor calls. These
+checks made no model calls and did not modify Owen. The initial proof wrapper's
+CP1252 output decoding assumption and corrected rerun are retained locally.
+
 From the checkout, with its development virtual environment installed:
 
 ```powershell
@@ -460,7 +496,7 @@ New-Item -ItemType Directory -Force $env:TEMP | Out-Null
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 .\.venv\Scripts\python.exe scripts/check_provenance.py
 .\.venv\Scripts\ruff.exe check harness2 tests scripts
-node --test tests/ui_story.test.cjs tests/profile_ui.test.cjs
+node --test tests/ui_story.test.cjs tests/profile_ui.test.cjs tests/capability_ui.test.cjs
 .\.venv\Scripts\python.exe -m pip wheel --no-index --no-deps --no-build-isolation --wheel-dir dist .
 .\.venv\Scripts\python.exe -m venv .test-tmp\wheel-check
 .\.test-tmp\wheel-check\Scripts\python.exe -m pip install --no-index --no-deps dist\harness2-0.1.0-py3-none-any.whl

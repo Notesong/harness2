@@ -83,7 +83,8 @@ class LocalRunTests(unittest.TestCase):
         )
         environments = [kwargs["env"] for _, kwargs in self.calls]
         self.assertEqual(
-            {env["HARNESS2_RUNS_DIR"] for env in environments}, {str(self.root / "experiment")}
+            {Path(env["HARNESS2_RUNS_DIR"]).resolve() for env in environments},
+            {(self.root / "experiment").resolve()},
         )
         self.assertTrue(
             all(env["HARNESS2_LOCAL_API_KEY"] == "ephemeral-fixture" for env in environments)

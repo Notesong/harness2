@@ -64,20 +64,30 @@ def pin_profile(
         "configuration": configuration["snapshot"], "harness": revision["tree"],
         "domain": revision.get("domain", ""), "experience": revision.get("experience", {}),
     }
-    payload["snapshot_hash"] = _digest(payload)
     output = Path(output).resolve()
     output.mkdir(parents=True, exist_ok=True)
     destination = output / SNAPSHOT_NAME
     with file_lock(output / ".profile-start.lock"):
         if destination.exists():
-            if load_snapshot(destination) != payload:
+            previous = load_snapshot(destination)
+            starting_state = {key: value for key, value in previous.items()
+                              if key not in ("snapshot_hash", "capabilities")}
+            if starting_state != payload:
                 raise ValueError("This experiment already has a different profile starting point.")
-            return payload
+            return previous
+        from .capability_runtime import catalog_snapshot
+
+        catalog = catalog_snapshot(store.workspace_root, profile_id)
+        if catalog is not None:
+            payload["capabilities"] = catalog
+        payload["snapshot_hash"] = _digest(payload)
+        serialized = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+        if len(serialized.encode("utf-8")) > MAX_SNAPSHOT:
+            raise ValueError("The combined profile and opted-in catalog exceed the run snapshot budget.")
         temporary = output / f".{SNAPSHOT_NAME}-{uuid.uuid4().hex}.tmp"
         try:
             with temporary.open("x", encoding="utf-8", newline="\n") as stream:
-                json.dump(payload, stream, ensure_ascii=False, indent=2)
-                stream.write("\n")
+                stream.write(serialized)
                 stream.flush()
                 os.fsync(stream.fileno())
             atomic_replace(temporary, destination)
@@ -105,6 +115,10 @@ def load_snapshot(path: Path) -> dict:
     context.assert_tree_has_no_grader_verdicts(harness)
     tree.validate(OPENCODE_SURFACE, harness)
     context.assert_tree_has_no_grader_verdicts({"EXPERIENCE.md": str(result.get("experience", {}))})
+    if "capabilities" in result:
+        from .capability_runtime import validate_catalog_snapshot
+
+        validate_catalog_snapshot(result["capabilities"])
     return result
 
 
@@ -216,23 +230,26 @@ class ProfileAdapter:
     def populate_profile_context(self, task_id: str, destination: Path) -> bool:
         """An explicit answer-free seed copied into disposable proposer context only."""
         experience = self.snapshot.get("experience", {})
-        if (not all(experience.get(key) for key in ("cue", "lesson", "evidence"))
-                or self.snapshot.get("domain") != self.domain_of(task_id)):
-            return False
-        destination.mkdir(parents=True, exist_ok=True)
-        chapter = destination / "profile-start"
-        tree.write_tree(OPENCODE_SURFACE, self.snapshot["harness"], chapter / "harness")
-        content = "\n".join(f"{key}: {value}" for key, value in experience.items())
-        context.assert_tree_has_no_grader_verdicts({"EXPERIENCE.md": content})
-        (chapter / "EXPERIENCE.md").write_text(content + "\n", encoding="utf-8")
-        with (destination / "INDEX.md").open("a", encoding="utf-8") as stream:
-            stream.write(
-                "\n## Pinned profile experience\n"
-                f"Profile: {self.snapshot['profile_name']}; revision: {self.snapshot['revision_id']}.\n"
-                "This is an explicitly selected earlier experience; its benefit on this task is unproven.\n"
-                "See profile-start/EXPERIENCE.md and profile-start/harness/.\n"
-            )
-        return True
+        populated = False
+        if (all(experience.get(key) for key in ("cue", "lesson", "evidence"))
+                and self.snapshot.get("domain") == self.domain_of(task_id)):
+            destination.mkdir(parents=True, exist_ok=True)
+            chapter = destination / "profile-start"
+            tree.write_tree(OPENCODE_SURFACE, self.snapshot["harness"], chapter / "harness")
+            content = "\n".join(f"{key}: {value}" for key, value in experience.items())
+            context.assert_tree_has_no_grader_verdicts({"EXPERIENCE.md": content})
+            (chapter / "EXPERIENCE.md").write_text(content + "\n", encoding="utf-8")
+            with (destination / "INDEX.md").open("a", encoding="utf-8") as stream:
+                stream.write(
+                    "\n## Pinned profile experience\n"
+                    f"Profile: {self.snapshot['profile_name']}; revision: {self.snapshot['revision_id']}.\n"
+                    "This is an explicitly selected earlier experience; its benefit on this task is unproven.\n"
+                    "See profile-start/EXPERIENCE.md and profile-start/harness/.\n"
+                )
+            populated = True
+        from .capability_runtime import populate_catalog_context
+
+        return populate_catalog_context(self.snapshot, destination) or populated
 
 
 def apply_profile(adapter, environment: Mapping[str, str] | None = None):
@@ -257,6 +274,8 @@ def apply_profile(adapter, environment: Mapping[str, str] | None = None):
 
 
 def capture_run_reference(store: ProfileStore, snapshot: dict, output: Path, **metadata) -> None:
+    if "capabilities" in snapshot:
+        metadata.setdefault("catalog_exposed_ids", [entry["id"] for entry in snapshot["capabilities"]["entries"]])
     store.record_run(snapshot["profile_id"], {
         "output_dir": str(Path(output).resolve()),
         "configuration_id": snapshot["configuration_id"], "revision_id": snapshot["revision_id"],
@@ -284,10 +303,10 @@ def candidate_from_run(store: ProfileStore, profile_id: str, record: dict, *, la
             if mode and selected_mode != mode:
                 continue
             if selection.get("ok") and selection.get("chosen_label"):
-                candidates.append((path, summary, selection))
+                candidates.append((path, summary, selection, selected_mode))
     if len(candidates) != 1:
         raise ValueError("Choose one task and mode from a run with a completed selection.")
-    path, summary, selection = candidates[0]
+    path, summary, selection, selected_mode = candidates[0]
     chosen_label = selection["chosen_label"]
     if not isinstance(chosen_label, str) or not re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", chosen_label):
         raise ValueError("The selected harness label must be one portable directory name.")
@@ -317,11 +336,37 @@ def candidate_from_run(store: ProfileStore, profile_id: str, record: dict, *, la
                  "output_dir": str(output), "job_id": record.get("id", ""),
                  "evidence_status": "observed",
                  "qualification": "Chosen within one run; benefit across tasks unproven."}]
+    borrowed = []
+    snapshot_path = output / SNAPSHOT_NAME
+    if snapshot_path.is_file():
+        snapshot = load_snapshot(snapshot_path)
+        if record.get("profile") and snapshot["snapshot_hash"] != record["profile"].get("snapshot_hash"):
+            raise ValueError("The source run's profile snapshot changed.")
+        entries = (snapshot.get("capabilities") or {}).get("entries", [])
+        if entries:
+            from .capability_runtime import declared_sources
+
+            evidence.append({"catalog_exposed_ids": [entry["id"] for entry in entries],
+                             "qualification": "Catalog exposure records availability, not use."})
+            modes = summary.get("modes") or {}
+            facts = modes.get(selected_mode, {}) if isinstance(modes, dict) else {}
+            stages = facts.get("stages", []) if isinstance(facts, dict) else []
+            if not isinstance(stages, list):
+                stages = []
+            notes = str(selection.get("why", "")) + "\n" + "\n".join(
+                str(stage.get("notes", "")) for stage in stages if isinstance(stage, dict)
+                and stage.get("label") == chosen_label
+            )
+            claims = declared_sources(snapshot, notes)
+            evidence.extend(claims)
+            borrowed = [{"profile_id": claim["origin"]["profile_id"],
+                         "revision_id": claim["origin"]["revision_id"],
+                         "component": claim["capability_id"]} for claim in claims]
     return store.add_revision(
         profile_id, harness, label=label or "Candidate from " + record.get("title", "run"),
         parents=parents, why=why or "Chosen within this run; benefit across tasks remains unproven.",
         evidence=evidence, domain=summary.get("domain", ""), operation="adapt",
-        experience=selection.get("experience") or {},
+        experience=selection.get("experience") or {}, borrowed_from=borrowed,
     )
 
 

@@ -57,16 +57,23 @@ def available_port():
         return listener.getsockname()[1]
 
 
+def windows_kernel():
+    import ctypes
+    from ctypes import wintypes
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+    kernel.OpenProcess.restype = wintypes.HANDLE
+    kernel.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+    kernel.WaitForSingleObject.restype = wintypes.DWORD
+    kernel.CloseHandle.argtypes = (wintypes.HANDLE,)
+    kernel.CloseHandle.restype = wintypes.BOOL
+    return kernel
+
+
 def process_alive(pid):
     if os.name == "nt":
-        import ctypes
-        from ctypes import wintypes
-
-        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
-        kernel.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
-        kernel.OpenProcess.restype = wintypes.HANDLE
-        kernel.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
-        kernel.CloseHandle.argtypes = (wintypes.HANDLE,)
+        kernel = windows_kernel()
         handle = kernel.OpenProcess(0x00100000, False, pid)
         if not handle:
             return False
@@ -115,6 +122,53 @@ class ManagedLocalServerTests(unittest.TestCase):
             return original([sys.executable, "-u", "-c", FAKE_SERVER, *args[1:]], **kwargs)
 
         return patch.object(local_server.processes, "start", side_effect=launch)
+
+    def assert_owned_stopped(self, manager):
+        """Check the retained process identity, not a fresh lookup by numeric PID.
+
+        Keep the root check immediate: close() promises to wait for its owned
+        launcher. A bounded descendant wait below covers asynchronous Job teardown,
+        but must not hide a root process that is still running when close returns.
+        """
+        process = manager._process
+        self.assertIsNotNone(process)
+        code = process.poll()
+        if os.name != "nt":
+            self.assertIsNotNone(code)
+            return
+        import ctypes
+
+        kernel = windows_kernel()
+        original_wait = kernel.WaitForSingleObject(int(process._handle), 0)
+        lookup = kernel.OpenProcess(0x00100000, False, process.pid)
+        lookup_error = ctypes.get_last_error() if not lookup else None
+        try:
+            lookup_wait = kernel.WaitForSingleObject(lookup, 0) if lookup else None
+        finally:
+            if lookup:
+                kernel.CloseHandle(lookup)
+        diagnostic = (f"pid={process.pid}, returncode={code}, original_handle={int(process._handle)}, "
+                      f"original_wait={original_wait}, reopened_pid_wait={lookup_wait}, "
+                      f"open_error={lookup_error}")
+        self.assertIsNotNone(code, diagnostic)
+        self.assertEqual(original_wait, 0, diagnostic)  # WAIT_OBJECT_0, without a grace period.
+
+    def retain_descendant(self, pid):
+        """Hold the known live descendant's identity through Job Object shutdown."""
+        import ctypes
+
+        kernel = windows_kernel()
+        handle = kernel.OpenProcess(0x00100000, False, pid)
+        self.assertTrue(handle, f"Cannot retain descendant {pid}: {ctypes.get_last_error()}")
+        self.addCleanup(kernel.CloseHandle, handle)
+        self.assertEqual(kernel.WaitForSingleObject(handle, 0), 258)  # WAIT_TIMEOUT: alive.
+        return handle
+
+    def assert_descendant_stopped(self, handle, pid):
+        # Windows terminates Job descendants asynchronously. Hold the original
+        # handle and allow bounded completion; a leaked 60-second fixture fails.
+        observed = windows_kernel().WaitForSingleObject(handle, 5000)
+        self.assertEqual(observed, 0, f"Owned descendant {pid} not stopped: wait={observed}")
 
     def test_external_is_a_copied_noop_even_with_invalid_managed_settings(self):
         source = {"HARNESS2_LOCAL_RUNTIME": "external", "HARNESS2_LOCAL_WEIGHTS": "missing",
@@ -207,7 +261,7 @@ class ManagedLocalServerTests(unittest.TestCase):
             manager.close()
         self.assertEqual(len(self.launches), 1)
         self.assertFalse(manager.started)
-        self.assertFalse(process_alive(manager.pid))
+        self.assert_owned_stopped(manager)
         self.assertEqual(self.environment, before)
         self.assertEqual(manager.environment, before)
         self.assertEqual(dict(os.environ), process_environment)
@@ -245,9 +299,10 @@ class ManagedLocalServerTests(unittest.TestCase):
             with manager:
                 child_pid = int(descendant.read_text())
                 self.assertTrue(process_alive(child_pid))
+                child_handle = self.retain_descendant(child_pid)
                 raise ValueError("owner failed")
-        self.assertFalse(process_alive(manager.pid))
-        self.assertFalse(process_alive(child_pid))
+        self.assert_owned_stopped(manager)
+        self.assert_descendant_stopped(child_handle, child_pid)
 
     def test_cancelled_before_start_never_launches(self):
         manager = self.manager(cancelled=lambda: True)
@@ -285,14 +340,15 @@ class ManagedLocalServerTests(unittest.TestCase):
                 self.assertTrue(descendant.exists())
                 child_pid = int(descendant.read_text())
                 self.assertTrue(process_alive(child_pid))
+                child_handle = self.retain_descendant(child_pid)
             event.set()
             worker.join(timeout=3)
             self.assertFalse(worker.is_alive())
         self.assertEqual(len(errors), 1)
         self.assertIsInstance(errors[0], local_server.LocalServerCancelled)
-        self.assertFalse(process_alive(manager.pid))
+        self.assert_owned_stopped(manager)
         if os.name == "nt":
-            self.assertFalse(process_alive(child_pid))
+            self.assert_descendant_stopped(child_handle, child_pid)
 
     def test_concurrent_starts_share_one_child(self):
         manager = self.manager()
@@ -316,7 +372,7 @@ class ManagedLocalServerTests(unittest.TestCase):
             self.assertEqual(results, [manager, manager])
             self.assertEqual(len(self.launches), 1)
             manager.close()
-        self.assertFalse(process_alive(manager.pid))
+        self.assert_owned_stopped(manager)
 
     def test_launch_exception_closes_log_and_preserves_original_environment(self):
         self.environment["HARNESS2_LOCAL_API_KEY"] = "saved"
@@ -354,7 +410,7 @@ class ManagedLocalServerTests(unittest.TestCase):
         self.assertFalse(worker.is_alive())
         self.assertEqual(len(errors), 1)
         self.assertIsInstance(errors[0], local_server.LocalServerCancelled)
-        self.assertFalse(process_alive(manager.pid))
+        self.assert_owned_stopped(manager)
 
     def test_real_child_exit_and_wrong_alias_fail_and_are_cleaned(self):
         for extra, message in (({"FAKE_EXIT": "1"}, "exit 7"),
@@ -369,7 +425,7 @@ class ManagedLocalServerTests(unittest.TestCase):
                         (RuntimeError, TimeoutError), message):
                     manager.start()
                 self.assertFalse(manager.started)
-                self.assertFalse(process_alive(manager.pid))
+                self.assert_owned_stopped(manager)
                 self.assertNotIn("HARNESS2_JUDGE_API_KEY", {
                     key: value for key, value in manager.environment.items()
                     if key not in environment})

@@ -425,6 +425,11 @@ class JobManager:
                 record["profile"] = {key: pinned[key] for key in (
                     "profile_id", "profile_name", "configuration_id", "revision_id", "snapshot_hash",
                 )}
+                exposed = (pinned.get("capabilities") or {}).get("entries", [])
+                record["capability_catalog"] = {
+                    "exposed": bool(exposed), "entry_count": len(exposed),
+                    "entry_ids": [entry["id"] for entry in exposed],
+                }
                 from ..profile_runtime import capture_run_reference
                 from ..profiles import ProfileStore
 

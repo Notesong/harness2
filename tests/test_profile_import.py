@@ -249,7 +249,7 @@ class HistoricalImportTests(unittest.TestCase):
         self.assertEqual(profile["active_configuration_id"], report["configuration_id"])
         self.assertEqual(profile["active_revision_id"], final["id"])
         self.assertEqual(len(profile["runs"]), 1)
-        self.assertEqual(profile["runs"][0]["output_dir"], str(self.run))
+        self.assertEqual(Path(profile["runs"][0]["output_dir"]).resolve(), self.run.resolve())
         self.assertTrue(any("57.58%" in note["text"] for note in profile["notes"]))
         self.assertTrue(any(note["evidence_status"] == "suspected" for note in profile["notes"]))
         for path in final["evidence"]:

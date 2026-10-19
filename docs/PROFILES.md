@@ -86,6 +86,12 @@ candidate with a reference to its source and starts as a hypothesis. It neither
 changes the source profile nor activates the borrowed harness. No successful
 component is distributed to every profile automatically.
 
+The separate [capability catalog](CAPABILITIES.md) can publish selected component
+files with provenance and support explicit file-level forks. Model exposure is
+disabled by default. Enabling workspace sharing alone does not expose references
+to a profile: that profile must opt in and a new experiment must pin its packet.
+Publishing and forking never change either profile's active harness automatically.
+
 ## Evidence and adoption are independent
 
 Notes distinguish these evidence classifications:

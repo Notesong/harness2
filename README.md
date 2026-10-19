@@ -88,6 +88,8 @@ demo, model setup, experiment controls, live logs, and result files. See the
 Studio's **Profiles** keep each model's configurations, harness ancestry,
 experience, and run history independent. Candidates can be tested without
 adoption, simplified, retired, or explicitly borrowed; see [model profiles](docs/PROFILES.md).
+The optional [capability catalog](docs/CAPABILITIES.md) shares selected components
+with provenance. It starts disabled; model reference access is a separate profile opt-in.
 
 Use **Windows or Linux, Python 3.12, and [uv](https://docs.astral.sh/uv/getting-started/installation/)**.
 On Windows, run these commands in PowerShell from the repository root:

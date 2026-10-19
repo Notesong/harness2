@@ -23,6 +23,7 @@
         <button class="nav-item selected" data-view="overview" aria-current="page"><span aria-hidden="true">◫</span>Home</button>
         <button class="nav-item" data-view="new"><span aria-hidden="true">＋</span>New experiment</button>
         <button class="nav-item" data-view="profiles"><span aria-hidden="true">♧</span>Profiles</button>
+        <button class="nav-item" data-view="capabilities"><span aria-hidden="true">❖</span>Capabilities</button>
         <button class="nav-item" data-view="runs"><span aria-hidden="true">☷</span>Runs<span id="nav-running" class="nav-count" hidden>0</span></button>
         <button class="nav-item" data-view="setup"><span aria-hidden="true">⚙</span>Setup</button>
       </nav>
@@ -65,6 +66,13 @@
         <section class="view" id="view-profiles" aria-labelledby="profiles-title" hidden>
           <div class="page-heading compact"><div><span class="eyebrow">ROOM TO BECOME DIFFERENT</span><h1 id="profiles-title">Profiles &amp; ancestry</h1><p>A continuing identity, its own harness, and an intelligible history of why it changed.</p></div></div>
           <div class="profiles-layout"><aside class="profile-sidebar"><div class="panel profile-list-panel"><h2>Who’s here?</h2><div id="profile-list" class="profile-list"></div></div><details class="panel profile-create-panel"><summary>A new beginning <span aria-hidden="true">＋</span></summary><form id="profile-create-form"><label for="profile-name">Name</label><input id="profile-name" maxlength="100" required placeholder="Give this profile a name"><label for="profile-description">A little about them <span class="optional">optional</span></label><textarea id="profile-description" rows="3" maxlength="2000" placeholder="What would you like to explore together?"></textarea><button type="submit" id="profile-create" class="button secondary profile-submit">Create profile</button><p class="field-help">Starts independently. Other profiles’ harnesses stay available as references.</p></form></details></aside><article id="profile-detail" class="panel profile-detail" aria-live="polite"><div class="empty-state roomy"><span class="empty-icon" aria-hidden="true">♧</span><h2>A history worth keeping.</h2><p>Select a profile to see its configurations, revisions, and the evidence behind its changes.</p></div></article></div>
+        </section>
+
+        <section class="view" id="view-capabilities" aria-labelledby="capabilities-title" hidden>
+          <div class="page-heading compact"><div><span class="eyebrow">IDEAS WITH AN ANCESTRY</span><h1 id="capabilities-title">Capabilities</h1><p>A shared catalog of what profiles make, why they made it, and what happens when another profile tries it.</p></div></div>
+          <div id="capability-status" class="panel capability-status" aria-live="polite"></div>
+          <details id="capability-access-panel" class="panel capability-management" hidden><summary>Choose which profiles may see the catalog</summary><p class="field-help">Each profile starts with access off. Turning access on makes a recorded catalog reference available to future experiments. It does not install or adopt a capability.</p><div id="capability-profile-access"></div></details>
+          <div class="capabilities-layout"><aside class="capability-sidebar"><div class="panel capability-list-panel"><label for="capability-search">Find a capability</label><input id="capability-search" type="search" placeholder="Name, origin, or purpose…"><div id="capability-list" class="capability-list"></div></div><details id="capability-publish-panel" class="panel capability-management" hidden><summary>Publish from a profile <span aria-hidden="true">＋</span></summary><div id="capability-publish-form"></div></details></aside><article id="capability-detail" class="panel capability-detail" aria-live="polite"></article></div>
         </section>
 
         <section class="view" id="view-runs" aria-labelledby="runs-title" hidden>

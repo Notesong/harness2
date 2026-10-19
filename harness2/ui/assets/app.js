@@ -3,7 +3,7 @@
 (() => {
   const $ = (selector) => document.querySelector(selector);
   const $$ = (selector) => [...document.querySelectorAll(selector)];
-  const views = { overview: "Home", new: "New experiment", profiles: "Profiles", runs: "Runs", setup: "Setup" };
+  const views = { overview: "Home", new: "New experiment", profiles: "Profiles", capabilities: "Capabilities", runs: "Runs", setup: "Setup" };
   const statusLabels = { starting: "Starting", running: "Running", succeeded: "Complete", failed: "Failed", partial: "Needs attention", exception: "Failed", cancelled: "Stopped", interrupted: "Interrupted", pending: "Waiting", completed: "Complete", complete: "Complete", skipped: "Skipped" };
   const kindLabels = { demo: "Free demo", benchmark: "Experiment", check: "Environment check", setup: "Benchmark setup", preview: "Experiment plan", judge: "Evaluation", report: "Report", authenticate: "Authentication" };
   const settingsFields = { local_url: "local-url", local_model: "local-model", local_context: "local-context", local_output: "local-output", local_runtime: "local-runtime", local_executable: "local-executable", local_weights: "local-weights", project: "project", region: "region", solver: "solver", improver: "improver", judge: "judge", codex_url: "codex-url", codex_model: "codex-model" };
@@ -39,6 +39,12 @@
   let profileBusy = false;
   let runProfileSignature = "";
   let experimentChoiceProfileId = null;
+  const capabilityCache = new Map();
+  let selectedCapabilityId = null;
+  let capabilitySignature = "";
+  let capabilityDetailSignature = "";
+  let capabilityLoadingId = null;
+  let capabilityBusy = false;
 
   function remember(key, value) { try { sessionStorage.setItem(key, value); } catch (_) { /* Session storage can be disabled. */ } }
   function recalled(key) { try { return sessionStorage.getItem(key); } catch (_) { return null; } }
@@ -132,11 +138,12 @@
       $("#main").focus({ preventScroll: true });
     }
     if (next === "runs" && selectedId) loadDetail(true);
-    if (next === "new") renderPlan();
+    if (next === "new") renderExperimentProfile();
     if (next === "profiles") {
       renderProfiles();
       if (changed && selectedProfileId && profileLoadingId !== selectedProfileId) loadProfile(selectedProfileId, { force: true });
     }
+    if (next === "capabilities") renderCapabilities();
   }
 
   function providerLabel(settings = state?.settings) {
@@ -550,6 +557,10 @@
       const configuration = configurations.find((item) => item.id === configurationSelect.value);
       const revision = revisions.find((item) => item.id === revisionSelect.value);
       help = configuration && revision ? `${configuration.label} · ${revision.label}. This choice tests the selected harness without changing the profile’s active harness. The run saves its exact starting point.` : "Capture a configuration and create a harness revision in Profiles before starting this experiment.";
+      if (state?.capabilities) {
+        const available = capabilityState().enabled && capabilityState().profile_access?.[id] === true;
+        help += available ? capabilityEntries().length ? ` Plan: ${counted(capabilityEntries().length, "catalog reference")} available. Launch records the final snapshot; availability does not confirm use.` : " Catalog access is on, but no entries are published yet." : " Catalog reference access is off for new experiments.";
+      }
     }
     experimentChoiceProfileId = id || null;
     text("#experiment-profile-help", help);
@@ -931,7 +942,7 @@
       $("#job-detail-content").append(wrap);
     }
     const profiles = state?.profiles || [];
-    const signature = JSON.stringify([job.id, job.status, profiles, job.profile || job.profile_plan || job.profile_binding || job.params]);
+    const signature = JSON.stringify([job.id, job.status, profiles, job.profile || job.profile_plan || job.profile_binding || job.params, job.capability_catalog]);
     if (!force && signature === runProfileSignature) return;
     runProfileSignature = signature;
     wrap.replaceChildren();
@@ -945,6 +956,19 @@
       const revisionId = binding?.revision_id || job.params?.profile_revision_id || "not recorded";
       const explanation = planned ? "The plan uses these choices. Starting an experiment records its own immutable snapshot." : binding ? "Later profile changes do not alter this run." : "These profile identifiers were saved in the run’s parameters.";
       info.append(element("h3", "", `${name} · ${planned ? "planned" : "recorded"} starting point`), element("p", "field-help", `Configuration ${configurationId} · harness ${revisionId}. ${explanation}`));
+      if (!planned && job.capability_catalog) {
+        const catalog = job.capability_catalog;
+        info.append(element("p", "field-help", catalog.exposed ? `Catalog references: ${count(catalog.entry_count)} (availability recorded; use unconfirmed).` : "Catalog not exposed for this run."));
+        if (catalog.exposed && catalog.entry_ids?.length) {
+          const references = element("details", "profile-evidence");
+          references.append(element("summary", "", "Inspect the recorded references"));
+          for (const id of catalog.entry_ids) {
+            const entry = capabilityEntries().find((item) => item.id === id);
+            references.append(capabilityButton(entry?.name || id, () => { showView("capabilities"); selectCapability(id); }, "text-button capability-run-reference"));
+          }
+          info.append(references);
+        }
+      }
       if (profileId) info.append(profileButton("Open profile ancestry →", () => selectProfile(profileId), "text-button"));
       wrap.append(info);
     }
@@ -981,6 +1005,401 @@
     details.append(form);
     wrap.append(details);
   }
+  function capabilityState() { return state?.capabilities || { enabled: false, profile_access: {}, entries: [] }; }
+  function capabilityEntries() { return Array.isArray(capabilityState().entries) ? capabilityState().entries : []; }
+  function capabilityParents(entry) {
+    return (entry.derived_from || []).map((item) => typeof item === "string" ? item : item?.capability_id || item?.id).filter(Boolean);
+  }
+  function capabilityButton(label, action, className = "button secondary small") {
+    const button = element("button", className, label);
+    button.type = "button";
+    button.disabled = capabilityBusy;
+    button.addEventListener("click", action);
+    return button;
+  }
+  function capabilityField(form, label, name, { multiline = false, required = false, numeric = false } = {}) {
+    const caption = element("label", "", label);
+    const input = element(multiline ? "textarea" : "input");
+    input.id = `capability-${name}`;
+    input.name = name;
+    input.required = required;
+    caption.htmlFor = input.id;
+    if (multiline) { input.rows = 3; input.maxLength = 4000; }
+    else if (numeric) { input.type = "number"; input.min = "0"; input.step = "any"; }
+    else input.maxLength = 200;
+    form.append(caption, input);
+    return input;
+  }
+  function capabilitySelect(form, label, name, choices) {
+    const caption = element("label", "", label);
+    const select = element("select");
+    select.id = `capability-${name}`;
+    select.name = name;
+    caption.htmlFor = select.id;
+    select.append(...choices.map(([value, title]) => { const option = element("option", "", title); option.value = value; return option; }));
+    form.append(caption, select);
+    return select;
+  }
+  function capabilityLines(input) { return input.value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean); }
+  // Conservative Unicode matching may request consent for additional paths;
+  // the archive still performs authoritative casefold collision validation.
+  function capabilityPathKey(path) { return String(path).normalize("NFKD").toUpperCase().toLowerCase(); }
+  async function capabilityAction(operation, body, success) {
+    if (capabilityBusy) return null;
+    capabilityBusy = true;
+    $$("#view-capabilities button").forEach((button) => { button.disabled = true; });
+    try {
+      const result = await api(`/api/capabilities/${operation}`, { method: "POST", body });
+      if (result.profile) cacheProfile(result.profile);
+      if (state) state.capabilities = result.catalog || result;
+      capabilitySignature = "";
+      capabilityDetailSignature = "";
+      capabilityBusy = false;
+      renderCapabilities();
+      renderProfiles();
+      renderExperimentProfile();
+      toast(success);
+      return result;
+    } catch (error) { toast(error.message, true); return null; }
+    finally {
+      capabilityBusy = false;
+      $$("#view-capabilities button").forEach((button) => { button.disabled = false; });
+    }
+  }
+  function selectCapability(id) {
+    selectedCapabilityId = id;
+    capabilitySignature = "";
+    capabilityDetailSignature = "";
+    renderCapabilities();
+    loadCapability(id);
+  }
+  async function loadCapability(id) {
+    if (!id || capabilityLoadingId === id) return;
+    capabilityLoadingId = id;
+    try {
+      const result = await api(`/api/capabilities/${encodeURIComponent(id)}`);
+      const entry = result.entry || result;
+      capabilityCache.set(id, entry);
+      if (selectedCapabilityId === id) {
+        capabilityDetailSignature = "";
+        renderCapabilityDetail(entry);
+      }
+    } catch (error) {
+      if (selectedCapabilityId === id) $("#capability-detail").replaceChildren(empty("This capability is unavailable.", error.message, true));
+      toast(error.message, true);
+    } finally { if (capabilityLoadingId === id) capabilityLoadingId = null; }
+  }
+  function renderCapabilities() {
+    if (!state || view !== "capabilities") return;
+    const catalog = capabilityState();
+    const profiles = state.profiles || [];
+    const entries = capabilityEntries();
+    const enabled = catalog.enabled === true;
+    const signature = JSON.stringify([catalog, profiles]);
+    if (capabilitySignature !== signature) {
+      capabilitySignature = signature;
+      const status = $("#capability-status");
+      const copy = element("div");
+      copy.append(element("span", "eyebrow", enabled ? "AVAILABLE WHEN A PROFILE OPTS IN" : "BUILT, AND RESTING FOR NOW"), element("h2", "", enabled ? "The catalog is enabled." : "The catalog is off."));
+      copy.append(element("p", "", enabled ? "Profiles keep their own harnesses. Catalog access is a separate choice for each profile; importing creates a candidate for testing." : "New experiments receive no catalog entries, files, or references. You can inspect saved entries here. Existing recorded run snapshots stay unchanged. Enable the catalog when there is something useful to exchange."));
+      const toggle = capabilityButton(enabled ? "Turn catalog off" : "Enable catalog", () => capabilityAction("settings", { enabled: !enabled }, enabled ? "Catalog off. Future experiments receive no catalog reference." : "Catalog enabled. Only profiles with explicit access receive references."), enabled ? "button secondary" : "button primary");
+      status.replaceChildren(copy, toggle);
+      status.classList.toggle("enabled", enabled);
+      $("#capability-access-panel").hidden = !enabled;
+      $("#capability-publish-panel").hidden = !enabled;
+      const access = $("#capability-profile-access");
+      access.replaceChildren(...profiles.map((profile) => {
+        const row = element("div", "capability-access-row");
+        const hasAccess = catalog.profile_access?.[profile.id] === true;
+        const info = element("div");
+        info.append(element("strong", "", profile.name), element("small", "", hasAccess ? "Reference access for future experiments" : "Access off · independent development"));
+        row.append(info, capabilityButton(hasAccess ? "Turn access off" : "Allow reference access", () => capabilityAction("access", { profile_id: profile.id, enabled: !hasAccess }, `${profile.name}: catalog access ${hasAccess ? "off" : "on"}.`)));
+        return row;
+      }));
+      if (!profiles.length) access.append(element("p", "field-help", "Create a profile first. Access starts off for each new profile."));
+      if (enabled) renderCapabilityPublisher(profiles);
+    }
+    renderCapabilityList();
+    if (!selectedCapabilityId || !entries.some((entry) => entry.id === selectedCapabilityId)) {
+      selectedCapabilityId = null;
+      $("#capability-detail").replaceChildren(empty(entries.length ? "A closer look at an idea." : "Room for something useful.", entries.length ? "Choose an entry to inspect its files, ancestry, and evidence." : enabled ? "Publish selected files from a profile when there is an idea worth testing elsewhere. Nothing is added automatically." : "The space is ready for later. No example capabilities have been added. Catalog access remains inactive while it is off.", true));
+    } else if (capabilityCache.has(selectedCapabilityId)) renderCapabilityDetail(capabilityCache.get(selectedCapabilityId));
+    else {
+      $("#capability-detail").replaceChildren(empty("Reading this capability…", "Its saved source and provenance will appear here.", true));
+      loadCapability(selectedCapabilityId);
+    }
+  }
+  function renderCapabilityList() {
+    const query = $("#capability-search").value.trim().toLocaleLowerCase();
+    const entries = capabilityEntries().filter((entry) => [entry.name, entry.description, entry.why, entry.origin?.profile_name, entry.kind].join(" ").toLocaleLowerCase().includes(query));
+    const list = $("#capability-list");
+    list.replaceChildren(...entries.map((entry) => {
+      const button = capabilityButton(entry.name, () => selectCapability(entry.id), `capability-list-item${entry.id === selectedCapabilityId ? " selected" : ""}`);
+      button.replaceChildren(element("strong", "", entry.name), element("small", "", `${entry.origin?.profile_name || entry.origin?.profile_id || "Origin unrecorded"} · ${human(entry.kind)}`));
+      if (entry.description) button.append(element("p", "", entry.description));
+      button.append(element("span", "evidence-badge", `Declared: ${human(entry.evidence_status || "unclassified")}`));
+      if (entry.id === selectedCapabilityId) button.setAttribute("aria-current", "true");
+      return button;
+    }));
+    if (!entries.length) list.append(element("p", "field-help", query ? "No capabilities match this search." : "No published capabilities yet."));
+  }
+  function renderCapabilityPublisher(profiles) {
+    const wrap = $("#capability-publish-form");
+    const form = element("form", "capability-form");
+    form.append(element("p", "field-help", "Publish a snapshot of selected files. Describe what they do and what supports them; publishing does not install anything."));
+    if (!profiles.length) { wrap.replaceChildren(element("p", "field-help", "Create a profile and save a harness revision first.")); return; }
+    const profileChoice = capabilitySelect(form, "Source profile", "publish-profile", profiles.map((profile) => [profile.id, profile.name]));
+    profileChoice.value = profiles[0].id;
+    const configurationChoice = capabilitySelect(form, "Origin configuration", "publish-configuration", []);
+    const revisionChoice = capabilitySelect(form, "Source harness revision", "publish-revision", []);
+    const fileChoices = element("fieldset", "profile-file-choices");
+    fileChoices.append(element("legend", "", "Files to publish"));
+    let selectedFiles = [];
+    let sourceProfile = null;
+    let sourceRequest = 0;
+    const fillFiles = () => {
+      const revision = sourceProfile?.revisions?.find((item) => item.id === revisionChoice.value);
+      selectedFiles = [];
+      fileChoices.replaceChildren(element("legend", "", "Files to publish"));
+      for (const path of revisionFiles(revision)) {
+        const line = element("label", "profile-checkbox");
+        const checkbox = element("input");
+        checkbox.type = "checkbox";
+        checkbox.value = path;
+        selectedFiles.push(checkbox);
+        line.append(checkbox, element("span", "", path));
+        fileChoices.append(line);
+      }
+      if (!selectedFiles.length) fileChoices.append(element("p", "field-help", "This revision has no publishable files."));
+    };
+    const fillSource = async () => {
+      const request = ++sourceRequest;
+      sourceProfile = null;
+      selectedFiles = [];
+      configurationChoice.replaceChildren();
+      revisionChoice.replaceChildren();
+      configurationChoice.value = "";
+      revisionChoice.value = "";
+      fileChoices.replaceChildren(element("legend", "", "Files to publish"), element("p", "field-help", "Reading the selected profile…"));
+      const loaded = await loadProfile(profileChoice.value, { render: false, force: true });
+      if (request !== sourceRequest) return;
+      sourceProfile = loaded;
+      configurationChoice.replaceChildren(...(sourceProfile?.configurations || []).map((item) => { const option = element("option", "", item.label || item.id); option.value = item.id; return option; }));
+      revisionChoice.replaceChildren(...(sourceProfile?.revisions || []).map((item) => { const option = element("option", "", `${item.label || item.id}${item.retired ? " · retired" : ""}`); option.value = item.id; return option; }));
+      configurationChoice.value = sourceProfile?.active_configuration_id || sourceProfile?.configurations?.[0]?.id || "";
+      revisionChoice.value = sourceProfile?.active_revision_id || sourceProfile?.revisions?.[0]?.id || "";
+      fillFiles();
+    };
+    profileChoice.addEventListener("change", fillSource);
+    revisionChoice.addEventListener("change", fillFiles);
+    form.append(fileChoices);
+    const name = capabilityField(form, "Capability name", "publish-name", { required: true });
+    const description = capabilityField(form, "What does it do?", "publish-description", { multiline: true, required: true });
+    const why = capabilityField(form, "What problem or opportunity led to it?", "publish-why", { multiline: true, required: true });
+    const kind = capabilitySelect(form, "Form", "publish-kind", [["workflow", "Workflow guidance"], ["skill", "On-demand skill"], ["script", "Deterministic script"], ["guardrail", "Guardrail"], ["plugin", "Plugin"], ["other", "Other"]]);
+    const portability = capabilitySelect(form, "Expected portability", "publish-portability", [["unknown", "Unknown · needs testing"], ["model-sensitive", "Sensitive to a model’s behavior"], ["runtime-specific", "Tied to a runtime"], ["deterministic", "Deterministic · model-independent behavior"]]);
+    const evidence = capabilitySelect(form, "Declared evidence status", "publish-evidence", [["suspected", "Suspected"], ["observed", "Observed"], ["replicated", "Replicated"], ["transferred", "Transferred"]]);
+    const references = capabilityField(form, "Supporting run, file, or URL references · one per line", "publish-references", { multiline: true });
+    form.append(element("p", "field-help", "These are the publisher’s claims. A receiving profile starts with this capability unvalidated locally."));
+    form.append(element("p", "field-help", "Observed, replicated, and transferred labels require a supporting reference. The catalog records the claim; it does not certify the reference."));
+    const costs = element("details", "profile-toolbox");
+    costs.append(element("summary", "", "Costs, limits, and ancestry"));
+    const context = capabilityField(costs, "Estimated context tokens", "publish-context", { numeric: true });
+    const time = capabilityField(costs, "Estimated time in seconds", "publish-time", { numeric: true });
+    const tools = capabilityField(costs, "Estimated tool calls", "publish-tools", { numeric: true });
+    const incompatibilities = capabilityField(costs, "Known incompatibilities · one per line", "publish-incompatibilities", { multiline: true });
+    const failures = capabilityField(costs, "Known failures · one per line", "publish-failures", { multiline: true });
+    const ancestry = element("fieldset", "profile-file-choices");
+    ancestry.append(element("legend", "", "Derived from a published capability?"));
+    const parents = capabilityEntries().map((entry) => {
+      const line = element("label", "profile-checkbox");
+      const check = element("input");
+      check.type = "checkbox";
+      check.value = entry.id;
+      line.append(check, element("span", "", `${entry.name} · ${entry.origin?.profile_name || entry.origin?.profile_id || entry.id}`));
+      ancestry.append(line);
+      return check;
+    });
+    if (!parents.length) ancestry.append(element("p", "field-help", "No published ancestors yet. Independent origins remain distinct from borrowed ideas."));
+    costs.append(ancestry);
+    form.append(costs);
+    const submit = element("button", "button secondary profile-submit", "Publish selected files");
+    submit.type = "submit";
+    form.append(submit);
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      if (!form.reportValidity() || !capabilityState().enabled) return;
+      const paths = selectedFiles.filter((input) => input.checked).map((input) => input.value);
+      if (!paths.length || !configurationChoice.value || !revisionChoice.value) { toast("Choose a configuration, a revision, and at least one file to publish.", true); return; }
+      const costValues = {};
+      for (const [key, input] of [["context_tokens", context], ["time_seconds", time], ["tool_calls", tools]]) if (input.value !== "") costValues[key] = Number(input.value);
+      const supporting = capabilityLines(references).map((reference) => ({ reference }));
+      if (evidence.value !== "suspected" && !supporting.length) { toast("Add a supporting reference for this evidence label, or choose Suspected.", true); return; }
+      capabilityAction("publish", { profile_id: profileChoice.value, configuration_id: configurationChoice.value, revision_id: revisionChoice.value, name: name.value.trim(), description: description.value.trim(), why: why.value.trim(), paths, kind: kind.value, portability: portability.value, evidence_status: evidence.value, evidence: supporting, costs: costValues, incompatibilities: capabilityLines(incompatibilities), failures: capabilityLines(failures), derived_from: parents.filter((input) => input.checked).map((input) => input.value) }, "Capability published. Profiles still choose what to test.");
+    });
+    wrap.replaceChildren(form);
+    fillSource();
+  }
+  function renderCapabilityDetail(entry) {
+    if (!entry?.id || entry.id !== selectedCapabilityId) return;
+    const enabled = capabilityState().enabled === true;
+    const signature = JSON.stringify([entry, enabled, state?.profiles, capabilityEntries()]);
+    if (signature === capabilityDetailSignature) return;
+    capabilityDetailSignature = signature;
+    const wrap = $("#capability-detail");
+    const heading = element("header", "profile-heading");
+    const title = element("div");
+    title.append(element("span", "eyebrow", "A PUBLISHED SNAPSHOT"), element("h2", "", entry.name), element("p", "", entry.description || ""));
+    heading.append(title);
+    const origin = entry.origin || {};
+    const provenance = profileSection("Where it came from", "The source remains intact. A published entry records this specific configuration and revision.");
+    const originLine = element("p", "profile-reason");
+    originLine.append(element("strong", "", origin.profile_name || origin.profile_id || "Origin not recorded"));
+    if (origin.profile_id && (state?.profiles || []).some((profile) => profile.id === origin.profile_id)) originLine.append(element("span", "", " · "), capabilityButton("Open profile ↗", () => selectProfile(origin.profile_id), "text-button"));
+    provenance.append(originLine, element("p", "field-help", `Configuration ${origin.configuration_id || "unrecorded"} · harness ${origin.revision_id || "unrecorded"}`));
+    provenance.append(element("p", "field-help", "The configuration is an origin association declared by the publisher; selecting it does not prove that it caused this capability."));
+    if (entry.created_at) provenance.append(element("p", "field-help", `Published ${when(entry.created_at)}`));
+    if (entry.why) provenance.append(element("h4", "", "Why it was made"), element("p", "profile-reason", entry.why));
+    const evidence = profileSection("What is known", "Evidence and portability describe the publisher’s account. They do not establish that this will help another profile.");
+    const tags = element("div", "capability-tags");
+    tags.append(element("span", "soft-tag", human(entry.kind || "other")), element("span", "soft-tag", `Portability: ${human(entry.portability || "unknown")}`), element("span", "evidence-badge", `Declared: ${human(entry.evidence_status || "unclassified")}`));
+    evidence.append(tags);
+    const costValues = Object.entries(entry.costs || {}).filter(([, value]) => value !== null && value !== "");
+    evidence.append(element("p", "field-help", costValues.length ? `Estimated costs: ${costValues.map(([key, value]) => `${human(key)} ${typeof value === "number" ? count(value) : String(value)}`).join(" · ")}` : "Costs have not been recorded."));
+    for (const [key, label] of [["incompatibilities", "Known incompatibilities"], ["failures", "Known failures"]]) {
+      evidence.append(element("h4", "", label));
+      const values = Array.isArray(entry[key]) ? entry[key] : [];
+      if (values.length) { const list = element("ul", "capability-notes"); list.append(...values.map((value) => element("li", "", typeof value === "string" ? value : JSON.stringify(value)))); evidence.append(list); }
+      else evidence.append(element("p", "field-help", "None recorded. This does not establish that none exist."));
+    }
+    if (entry.evidence?.length || entry.supporting_runs?.length) {
+      const details = element("details", "profile-evidence");
+      details.append(element("summary", "", "Supporting evidence from the source"), element("pre", "profile-snapshot", JSON.stringify(entry.evidence || entry.supporting_runs, null, 2)));
+      evidence.append(details);
+    }
+    const family = profileSection("A family of ideas", "Independent invention and transmitted changes keep different ancestry.");
+    const appendRelative = (label, id) => {
+      const relative = capabilityEntries().find((item) => item.id === id);
+      const row = element("div", "capability-relative");
+      row.append(element("small", "", label), capabilityButton(relative?.name || id, () => selectCapability(id), "text-button"));
+      family.append(row);
+    };
+    const parents = capabilityParents(entry);
+    if (parents.length) parents.forEach((id) => appendRelative("Derived from", id));
+    else family.append(element("p", "field-help", "No published ancestor is recorded for this entry. This declaration does not certify independent invention."));
+    capabilityEntries().filter((item) => capabilityParents(item).includes(entry.id)).forEach((child) => appendRelative("Later variant", child.id));
+    const forks = capabilityEntries().find((item) => item.id === entry.id)?.forks || entry.forks || [];
+    if (forks.length) {
+      family.append(element("h4", "", "Forks in profiles"));
+      const seen = new Set();
+      for (const fork of forks) {
+        const key = `${fork.profile_id}/${fork.revision_id}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const row = element("div", "capability-relative");
+        row.append(capabilityButton(`${fork.profile_name || fork.profile_id} · ${fork.revision_label || fork.revision_id}`, () => selectProfile(fork.profile_id), "text-button"), element("small", "", `${fork.active ? "Active harness" : "Saved revision"} · local validation: ${human(fork.local_validation || "unvalidated")}`));
+        family.append(row);
+      }
+    }
+    const filesSection = profileSection("The capability itself", "Saved files are shown as plain text. Reading or forking does not execute them.");
+    const files = entry.files || {};
+    for (const [path, value] of Object.entries(files)) {
+      const file = element("details", "profile-card capability-file");
+      file.append(element("summary", "", path), element("pre", "profile-snapshot", typeof value === "string" ? value : value?.content || ""));
+      filesSection.append(file);
+    }
+    if (!Object.keys(files).length) filesSection.append(element("p", "field-help", "No readable files were returned for this entry."));
+    wrap.replaceChildren(heading, provenance, evidence, family, filesSection);
+    if (enabled) wrap.append(renderCapabilityFork(entry));
+    else wrap.append(element("p", "profile-continuity-note", "The catalog is off. You are inspecting saved material. New experiments receive no catalog reference, and catalog imports are disabled. Existing run snapshots stay unchanged."));
+  }
+  function renderCapabilityFork(entry) {
+    const section = profileSection("Try it in another profile", "Forks are candidates and start unvalidated locally. Nothing is executed or adopted; the receiving profile keeps its current active harness.");
+    const profiles = (state?.profiles || []).filter((profile) => profile.id !== entry.origin?.profile_id);
+    if (!profiles.length) { section.append(element("p", "field-help", "A second profile will give this idea somewhere new to go.")); return section; }
+    const form = element("form", "capability-form");
+    const target = capabilitySelect(form, "Receiving profile", "fork-profile", profiles.map((profile) => [profile.id, profile.name]));
+    target.value = profiles[0].id;
+    const base = capabilitySelect(form, "Start from this harness", "fork-parent", []);
+    let targetProfile = null;
+    let requestId = 0;
+    const conflicts = element("fieldset", "profile-file-choices");
+    const replacements = [];
+    const edits = [];
+    const fileEditors = element("details", "profile-toolbox");
+    fileEditors.append(element("summary", "", "Adapt the borrowed files before saving · optional"), element("p", "field-help", "Changes belong to the new candidate. The published source is preserved. You can publish a tested variant later from its profile revision."));
+    for (const [path, value] of Object.entries(entry.files || {})) {
+      const line = element("label", "profile-checkbox");
+      const check = element("input");
+      check.type = "checkbox";
+      line.append(check, element("span", "", `Edit ${path}`));
+      const editor = element("textarea", "capability-file-editor");
+      editor.value = typeof value === "string" ? value : value?.content || "";
+      editor.rows = 7;
+      editor.hidden = true;
+      editor.setAttribute("aria-label", `Modified content for ${path}`);
+      check.addEventListener("change", () => { editor.hidden = !check.checked; });
+      edits.push({ path, check, editor });
+      fileEditors.append(line, editor);
+    }
+    const fillConflicts = () => {
+      replacements.length = 0;
+      conflicts.replaceChildren(element("legend", "", "Review files already in the receiving harness"));
+      const revision = targetProfile?.revisions?.find((item) => item.id === base.value);
+      const existing = new Set(revisionFiles(revision).map(capabilityPathKey));
+      for (const path of Object.keys(entry.files || {}).filter((path) => existing.has(capabilityPathKey(path)))) {
+        const line = element("label", "profile-checkbox");
+        const check = element("input");
+        check.type = "checkbox";
+        check.value = path;
+        check.required = true;
+        replacements.push(check);
+        line.append(check, element("span", "", `Replace ${path} in this new candidate`));
+        conflicts.append(line);
+      }
+      conflicts.hidden = !replacements.length;
+    };
+    const fillTarget = async () => {
+      const request = ++requestId;
+      targetProfile = null;
+      base.replaceChildren();
+      base.value = "";
+      conflicts.hidden = true;
+      replacements.length = 0;
+      const loaded = await loadProfile(target.value, { render: false, force: true });
+      if (request !== requestId) return;
+      targetProfile = loaded;
+      base.replaceChildren(...(targetProfile?.revisions || []).map((revision) => { const option = element("option", "", revision.label || revision.id); option.value = revision.id; return option; }));
+      base.value = targetProfile?.active_revision_id || targetProfile?.revisions?.[0]?.id || "";
+      fillConflicts();
+    };
+    target.addEventListener("change", fillTarget);
+    base.addEventListener("change", fillConflicts);
+    form.append(conflicts);
+    const label = capabilityField(form, "Candidate name", "fork-label", { required: true });
+    label.value = `${entry.name} · local candidate`;
+    const why = capabilityField(form, "Why test this here?", "fork-why", { required: true, multiline: true });
+    form.append(fileEditors);
+    const submit = element("button", "button secondary profile-submit", "Save fork as a candidate");
+    submit.type = "submit";
+    form.append(submit);
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (!form.reportValidity() || !capabilityState().enabled) return;
+      if (!base.value) { toast("Choose a receiving harness before saving a fork.", true); return; }
+      if (replacements.some((input) => !input.checked)) { toast("Review each existing file before replacing it in the new candidate.", true); return; }
+      const replace_files = Object.fromEntries(edits.filter((edit) => edit.check.checked).map((edit) => [edit.path, edit.editor.value]));
+      const body = { capability_id: entry.id, target_profile_id: target.value, parent_revision_id: base.value, label: label.value.trim(), why: why.value.trim(), replace_paths: replacements.filter((input) => input.checked).map((input) => input.value) };
+      if (Object.keys(replace_files).length) body.replace_files = replace_files;
+      const result = await capabilityAction("fork", body, "Fork saved as a candidate, unvalidated locally. The active harness is unchanged.");
+      if (result?.profile) selectProfile(result.profile.id);
+    });
+    section.append(form);
+    fillTarget();
+    section.append(element("p", "field-help", "Skill forks may add a discovery hint to the candidate’s guidance."));
+    return section;
+  }
+
   function renderTools() {
     const tools = state.tools || [];
     const signature = JSON.stringify(tools);
@@ -1020,6 +1439,7 @@
     renderRecent();
     renderJobs();
     renderProfiles();
+    renderCapabilities();
     renderPlan();
     updateBusy();
   }
@@ -1517,6 +1937,7 @@
   $("#onboarding-demo").addEventListener("click", () => launch("demo", { k: 2, mode: "both" }));
   $("#experiment-form").addEventListener("submit", (event) => { event.preventDefault(); const params = formParams(); if (params) launch("benchmark", params, true); });
   $("#profile-create-form").addEventListener("submit", createProfile);
+  $("#capability-search").addEventListener("input", renderCapabilityList);
   $("#experiment-profile").addEventListener("change", renderExperimentProfile);
   ["experiment-configuration", "experiment-revision"].forEach((id) => $("#" + id).addEventListener("change", renderExperimentProfile));
   $("#preview-experiment").addEventListener("click", () => { const params = formParams(); if (params) launch("preview", params); });
