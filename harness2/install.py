@@ -31,6 +31,7 @@ from pathlib import Path
 from urllib.request import urlopen
 
 from . import config
+from .local_models import validate_api_base_url
 
 PATCHES = {
     "opencode": "opencode-compat.diff",
@@ -308,6 +309,7 @@ def configure_codex(*, dry_run=False):
         print("Configure Codex -- set HARNESS2_CODEX_BASE_URL before installation", flush=True)
         return
     config.require("HARNESS2_CODEX_BASE_URL", needed_by="Codex setup")
+    validate_api_base_url(config.CODEX_BASE_URL)
     body = (
         f"model = {json.dumps(config.SOLVER_MODEL_CX)}\n"
         f"model_provider = {json.dumps(CODEX_PROVIDER)}\n"
@@ -330,6 +332,11 @@ def codex_config_error() -> str | None:
     endpoint is silently ignored and the run contacts the stale one. Returns None when
     the file agrees with the environment, else a message naming the remedy.
     """
+    if config.CODEX_BASE_URL:
+        try:
+            validate_api_base_url(config.CODEX_BASE_URL)
+        except ValueError as exc:
+            return f"{exc} {CODEX_CONFIG_REMEDY}"
     path = config.CODEX_HOME_DIR / "config.toml"
     try:
         data = tomllib.loads(path.read_text(encoding="utf-8"))
@@ -343,7 +350,8 @@ def codex_config_error() -> str | None:
     provider = data.get("model_provider")
     block = (data.get("model_providers") or {}).get(provider) or {}
     stale = [
-        f"{key} is {found!r}, configuration says {want!r}"
+        "base_url differs from configuration" if key == "base_url"
+        else f"{key} is {found!r}, configuration says {want!r}"
         for key, want, found in (
             ("base_url", config.CODEX_BASE_URL, block.get("base_url")),
             ("model", config.SOLVER_MODEL_CX, data.get("model")),

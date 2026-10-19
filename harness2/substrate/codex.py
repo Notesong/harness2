@@ -34,6 +34,7 @@ from .. import config
 from ..core import runmark as RM
 from ..core import tree as HT
 from ..core.tree import SurfaceSpec
+from ..local_models import validate_api_base_url
 from .base import Install, Launcher, RunRequest
 
 CODEX_SURFACE = SurfaceSpec(
@@ -209,18 +210,18 @@ class CodexSubstrate:
         from urllib.parse import urlparse
 
         config.require("HARNESS2_CODEX_BASE_URL", needed_by="Codex Responses endpoint")
+        url = urlparse(validate_api_base_url(config.CODEX_BASE_URL))
+        if require_bridge:
+            if not config.CODEX_CONTAINER_URL:
+                raise RuntimeError(
+                    "Set HARNESS2_CODEX_CONTAINER_URL to a container-accessible Responses endpoint"
+                )
+            validate_api_base_url(config.CODEX_CONTAINER_URL)
         config.require("HARNESS2_CODEX_API_KEY", needed_by="Codex endpoint authentication")
-        url = urlparse(config.CODEX_BASE_URL)
-        if url.scheme not in ("http", "https") or not url.hostname:
-            raise config.ConfigError("HARNESS2_CODEX_BASE_URL must be an HTTP(S) URL")
         binary = config.codex_binary()
         if not binary.is_file():
             raise RuntimeError(
                 "Codex is not installed; run scripts/setup_benchmark.py with --substrate cx"
-            )
-        if require_bridge and not config.CODEX_CONTAINER_URL:
-            raise RuntimeError(
-                "Set HARNESS2_CODEX_CONTAINER_URL to a container-accessible Responses endpoint"
             )
         with socket.create_connection(
             (url.hostname, url.port or (443 if url.scheme == "https" else 80)), timeout=5

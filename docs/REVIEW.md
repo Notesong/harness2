@@ -57,7 +57,10 @@ The local-provider and Studio review found three concrete defects:
 - CLI local endpoints accepted embedded URL credentials, although Studio
   rejected them. Both now use the same HTTP(S) base validator, which rejects
   user information, queries, fragments, and malformed ports before an endpoint
-  can enter public experiment identity. Errors do not echo the rejected URL.
+  can enter public experiment identity. Explicit judge and Codex endpoints use
+  that validator before metadata, setup writes, or network checks, too. Errors
+  and stale-configuration diagnostics do not echo endpoint values. Valid cached
+  endpoint strings retain their existing spelling.
 - The no-auth judge placeholder `local` entered the secret filter and damaged
   ordinary log text. That placeholder is exempt only for a matching local judge
   profile without a real local API key. Genuine keys, including short values
@@ -67,6 +70,11 @@ The local-provider and Studio review found three concrete defects:
   launching another attempt. Final cleanup failures are logged while delivered
   output remains available; unexpected runner exceptions retain recoverable
   scratch output.
+
+An additional logging defect hid timeout markers when an attempt produced
+partial output before its deadline. Every completed attempt now records its
+actual exit code and output presence, including those timeouts. The upstream
+policy of delivering partial output without retrying remains unchanged.
 
 Regression checks cover rejected credentials before metadata or settings writes,
 actual log filtering, deep read-only scratch files, failed staging and retry

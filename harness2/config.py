@@ -21,7 +21,7 @@ import shutil
 import sys
 from pathlib import Path
 
-from .local_models import profile_defaults
+from .local_models import profile_defaults, validate_api_base_url
 
 PKG = Path(__file__).resolve().parent
 ROOT = PKG.parent if (PKG.parent / "pyproject.toml").is_file() else Path.cwd()
@@ -265,3 +265,5 @@ def validate_models(*, judge: bool = False) -> None:
             raise ConfigError("Set GOOGLE_CLOUD_PROJECT for Vertex AI")
     if judge:
         require("HARNESS2_JUDGE_MODEL", needed_by="benchmark judging")
+        if JB_JUDGE_API_BASE:
+            validate_api_base_url(JB_JUDGE_API_BASE)

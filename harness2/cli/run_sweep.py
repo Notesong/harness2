@@ -42,7 +42,7 @@ from pathlib import Path
 from .. import config
 from ..core import schedule
 from ..core.proposer import Proposer
-from ..local_models import profile_identity
+from ..local_models import profile_identity, validate_api_base_url
 from . import _common as C
 
 
@@ -210,6 +210,12 @@ def _main(args: argparse.Namespace) -> int:
 
 def _check_identity(adapter, args, namespace_dir: Path) -> None:
     """Prevent a resumed run or library from silently mixing models or task partitions."""
+    for endpoint in (
+        config.JB_JUDGE_API_BASE,
+        config.CODEX_BASE_URL if args.substrate == "cx" else "",
+    ):
+        if endpoint:
+            validate_api_base_url(endpoint)
     identity = {
         "method_version": config.METHOD_VERSION,
         "executor": config.SOLVER_MODEL_OC if args.substrate == "oc" else config.SOLVER_MODEL_CX,
