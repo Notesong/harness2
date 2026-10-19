@@ -23,7 +23,7 @@ class RunnerTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory(prefix="runner tests ")
         self.addCleanup(temporary.cleanup)
-        self.root = Path(temporary.name)
+        self.root = Path(temporary.name).resolve()
 
     def test_native_timeout_stops_child_tree(self):
         child = "import time; time.sleep(30)"

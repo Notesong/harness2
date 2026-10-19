@@ -10,7 +10,10 @@ Start your server before running an experiment. The following Windows recipe
 uses the 64K, thinking-off configuration tested with llama.cpp build `b11406`
 (`8216c8462`). It passed text, structured-tool, and actual 40,045-token prompt
 checks with the tested 27B Q3 model on a 16 GB RTX 5060 Ti. That establishes
-transport and context capacity; the full benchmark outcome is recorded separately
+transport and context capacity. The same-task benchmark rerun is an engineering
+smoke test: prior task-specific findings were already public and multiple
+settings changed together. It supports neither a contamination-free repeat nor
+a causal comparison of context sizes. Its outcome is recorded separately
 in [the validation record](VALIDATION.md). Adapt the paths for your installation:
 
 ```powershell
@@ -64,8 +67,8 @@ The model setting must match the server's alias. The API base URL includes
 context and the maximum completion requested by OpenCode; output must be
 smaller than context. If omitted, the generic helper defaults remain 32768 and
 4096; those defaults do not configure or discover the server's actual limits.
-Set both explicitly to match your server. With no explicit solver, improver, or judge settings,
-this profile supplies:
+Set both explicitly to match your server. With no explicit solver, improver,
+or judge settings, this profile supplies:
 
 ```dotenv
 HARNESS2_SOLVER_MODEL=local/local-model-64k

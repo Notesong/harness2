@@ -21,7 +21,7 @@ class RunnerParityTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory(prefix="runner parity ")
         self.addCleanup(temporary.cleanup)
-        self.root = Path(temporary.name)
+        self.root = Path(temporary.name).resolve()
 
     def test_codex_discovery_and_serial_models_with_parallel_tasks(self):
         for task in ("accounting/task1", "law/task2", "law/not-a-task"):
@@ -227,6 +227,9 @@ class RunnerParityTests(unittest.TestCase):
             os.chdir(previous)
 
     def test_lab_codex_main_writes_valid_toml_for_non_bmp_paths(self):
+        # LAB results deliberately cannot live under /tmp on POSIX.
+        results = tempfile.TemporaryDirectory(prefix="lab results ", dir=config.ROOT)
+        self.addCleanup(results.cleanup)
         fake_external = types.ModuleType("external")
         fake_tts = types.ModuleType("external.tts_lab")
         fake_tts.config = types.SimpleNamespace(
@@ -245,7 +248,7 @@ class RunnerParityTests(unittest.TestCase):
         reader = self.root / "read_doc.py"
         reader.write_text("# fixture reader", encoding="utf-8")
         module.SCRATCH_BASE = self.root / "scratch 🐈"
-        module.RESULTS_ROOT = self.root / "results"
+        module.RESULTS_ROOT = Path(results.name).resolve()
         module.CODEX_BIN = Path(sys.executable)
         module.READ_DOC = reader
         args = types.SimpleNamespace(

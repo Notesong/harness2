@@ -19,7 +19,7 @@ Pandoc and Poppler are needed by LAB. Also install:
 
 - [Node.js](https://nodejs.org/en/download) 20 or newer.
 - [uv](https://docs.astral.sh/uv/getting-started/installation/).
-- [Google Cloud CLI](https://cloud.google.com/sdk/docs/install).
+- [Google Cloud CLI](https://cloud.google.com/sdk/docs/install) for Vertex AI.
 - [Docker Engine](https://docs.docker.com/engine/install/) for WorkBuddy-Bench,
   with permission to run `docker info`. Windows uses Docker Desktop with its
   Linux container engine.
@@ -28,6 +28,10 @@ Benchmark setup installs its own pinned Bun runtime under `dependencies/`.
 Keep the main Harness² environment active when running the commands below.
 
 ## Models and credentials
+
+For a local llama.cpp model, follow the [local-model guide](LOCAL_MODELS.md).
+JobBench with OpenCode supports a complete local pipeline without Google Cloud
+credentials. The Vertex configuration below is a separate provider option.
 
 Copy `.env.example` to `.env` if you have not already done so. Set your Vertex AI
 project and model IDs, then authenticate:

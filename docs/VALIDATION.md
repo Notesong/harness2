@@ -136,7 +136,16 @@ metadata are retained under the ignored `runs/local-model-smoke/` directory;
 actual run state is under `runs/jb/`. `manual-stop.json` records the operator
 cutoff and `first-profile-sanitized.json` records its configuration without keys.
 
-## Separate 64K local model experiment: in progress
+## Separate 64K engineering smoke test: in progress
+
+This is an engineering and capacity smoke test, not a pristine controlled
+repeat. The first attempt's task-specific forensic report was committed and
+pushed in `252dd802cc2e80f1fa9f0e82ab551fbd3070bcbe` before this web-enabled
+same-task run began. There is no evidence that the model accessed that report,
+but the possible public-history channel cannot be ruled out. Unchanged task
+and rubric hashes establish input identity, not freedom from contamination.
+Context size, completion allowance, and thinking policy were changed together;
+the outcome cannot isolate the causal effect of any one setting.
 
 The same GGUF weights were loaded under the new alias `qwen3.8-local-64k`,
 with context 65,536, output allowance 8192, one slot, `q8_0` K/V caches, and

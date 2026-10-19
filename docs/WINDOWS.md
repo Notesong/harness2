@@ -16,7 +16,7 @@ and [local models](LOCAL_MODELS.md) for llama.cpp setup.
 Install Git, Python 3.12, and uv, then open PowerShell:
 
 ```powershell
-git clone https://github.com/Notesong/harness2.git
+git clone --branch windows-support https://github.com/Notesong/harness2.git
 cd harness2
 uv venv --python 3.12 .venv
 uv pip install --python .venv/Scripts/python.exe -e '.[render]'
@@ -52,17 +52,20 @@ the packaging tool's behavior.
 | JobBench and LAB judges | Separate native Python environments |
 | WorkBuddy | Windows host orchestration; tasks and executors run in Linux Docker containers |
 
-Install Node.js 20+ and Google Cloud CLI, and ensure `git`, `npm`, `uv`, and
-`gcloud` are on PATH. The installer resolves Windows `.cmd` launchers and creates
-each benchmark environment using `.venv/Scripts/python.exe` automatically.
-Setup installs its own pinned Bun runtime; a global Bun install is unnecessary.
+Install Node.js 20+, and ensure `git`, `npm`, and `uv` are on PATH. Vertex AI
+also requires Google Cloud CLI and `gcloud` on PATH. The installer resolves
+Windows `.cmd` launchers and creates each benchmark environment using
+`.venv/Scripts/python.exe` automatically. Setup installs its own pinned Bun
+runtime; a global Bun install is unnecessary.
 
 LAB also needs Pandoc and Poppler (`pdftoppm` on PATH). Install Windows builds
 of these tools before running its setup check. The pinned OpenCode supports
 PowerShell on Windows, and can also use Git Bash. Harness² setup and benchmark
 launchers do not require Bash.
 
-Copy the configuration template and fill in model IDs available to your project:
+For local JobBench with OpenCode, follow the [llama.cpp guide](LOCAL_MODELS.md);
+Google credentials are unnecessary. For Vertex AI, copy the configuration
+template and fill in model IDs available to your project:
 
 ```powershell
 Copy-Item .env.example .env
@@ -127,6 +130,8 @@ harness2-demo --output runs/demo --k 2
 
 The tests cover local recursion and resume, concurrent file locking, executable
 and environment paths, runner commands, and timeout cleanup without model calls.
-The CI workflow is configured for Windows and Ubuntu with Python 3.12 and 3.13. A complete
-model-backed benchmark also requires working cloud credentials, datasets, and
-the relevant external tools; the local suite does not validate those services.
+The CI workflow is configured for Windows and Ubuntu with Python 3.12 and 3.13.
+A complete model-backed benchmark also requires a working model connection,
+datasets, and the relevant external tools; the local suite does not validate
+those services. See [the validation record](VALIDATION.md) for actual local-model
+execution and its limits.
