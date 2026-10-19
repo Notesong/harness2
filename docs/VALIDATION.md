@@ -58,9 +58,11 @@ the normal host environment here: the restricted execution environment blocks
 loopback access with Windows error 10013, so its HTTP test failures do not
 establish an application failure.
 
-The final pre-commit normal-host suite passed **80 tests in 39.181 seconds**:
+A pre-commit normal-host suite passed **80 tests in 39.181 seconds**:
 50 portability tests, 11 local-provider tests, 17 UI API tests, and two startup
 tests. Ruff, all 47 release asset checks, and `git diff --check` also passed.
+After adding UI context/output controls, the suite passed **83 tests in
+40.366 seconds**, with Ruff and all 47 provenance checks passing again.
 
 Browser checks at 1440-pixel desktop width and 390-pixel narrow width found no
 horizontal overflow. The UI read local `/models` metadata, ran the real
@@ -72,12 +74,14 @@ were also exercised. These UI checks establish those local interactions; they
 do not establish a successful model-driven benchmark or external-provider
 access.
 
-## Local model test: in progress at the UI snapshot
+## First local model experiment: manually stopped after preserved compaction
 
-As of **2026-10-19 02:44 UTC** (October 18, 21:44 CDT), an actual JobBench
-baseline was still running. The local test had not completed the baseline,
-adaptation, judge, or report. No benchmark score or successful full workflow is
-claimed by this snapshot.
+The first actual JobBench baseline was manually stopped at **2026-10-19
+02:57:25.666707 UTC** (October 18, 21:57 CDT), about 30 minutes after it
+started. Its output directory was still empty at the second automatic
+compaction boundary. The agreed stop preserved the experiment before a
+separate capacity adjustment; it was not a framework crash or autonomous
+timeout. No baseline, adaptation, judge, report, or benchmark score completed.
 
 The owned llama.cpp server used build `b11406`, commit `8216c8462`, with the
 user's existing Unsloth `Qwen3.8-27B-UD-Q3_K_XL.gguf` file (13,146,393,504 bytes)
@@ -108,25 +112,51 @@ Completed live checks:
   the conversation grew. This demonstrated real local-provider transport and
   tool execution, rather than a mocked runner.
 
-The baseline started at 21:27:21 CDT. At the snapshot it had reached the 32K
-context limit, returned a `length` finish, and recorded an invalid-tool repair.
-OpenCode then started compaction. Read-only metadata from the test's isolated
-OpenCode database confirmed `agent=compaction`, `providerID=local`, and
-`modelID=qwen3.8-local`; compaction had not finished. The profile also selected
-the local small model, preventing a cloud small-model fallback. These facts
-establish routing, not successful recovery or a completed work product.
+The baseline started at 21:27:21 CDT. It reached the 32K context limit,
+returned a `length` finish, and recorded an invalid-tool repair. Its first
+compaction summary completed with a 4096-token `length` finish and OpenCode
+accepted it. The resumed agent repeated local reads and external-reference
+research, then reached a second proactive compaction threshold. Read-only
+snapshots retained the boundary, exposed summary, resumed actions, and final
+operator cutoff. All phases used `providerID=local` and
+`modelID=qwen3.8-local`; the small model was also local. The preserved record
+carefully separates observable continuity from details absent from an exposed
+summary; it does not expose private reasoning or infer loss from omission alone.
+See [the full compaction experiment](experiments/LOCAL_COMPACTION.md).
 
 The actual run retained template thinking; OpenCode's `reasoning: false`
 capability does not disable it. The server settings were not changed mid-run.
 The selected task requires four Markdown documents and an external reference,
 so being the smallest download does not make it a short generation workload.
 The configured `k=1`, parallel, one-task run entails four executor rollouts,
-three adaptation sessions, reflection, and the upstream ten-rubric judge. Its
+three adaptation stages, reflection, and the upstream ten-rubric judge. Its
 single final uses the existing trivial-selection path; it does not exercise a
 blind model-selector session. Logs, probe responses, task provenance, and phase
 metadata are retained under the ignored `runs/local-model-smoke/` directory;
-actual run state is under `runs/jb/`. A later outcome record must distinguish
-completed stages from capacity, timeout, or protocol failures.
+actual run state is under `runs/jb/`. `manual-stop.json` records the operator
+cutoff and `first-profile-sanitized.json` records its configuration without keys.
+
+## Separate 64K local model experiment: in progress
+
+The same GGUF weights were loaded under the new alias `qwen3.8-local-64k`,
+with context 65,536, output allowance 8192, one slot, `q8_0` K/V caches, and
+server-wide `--reasoning off`. Text and structured-tool checks passed without
+request-level thinking overrides. An actual 40,045-token prompt returned
+`READY` in 109.17 seconds without truncation; prompt throughput was 367.77
+tokens/second. The short tool response generated 36 tokens at 16.17
+tokens/second. GPU memory free after these checks was approximately 1497 MiB
+of 16,311 MiB; this is measured fit for this configuration, not a guarantee
+for arbitrary contexts or concurrent workloads.
+
+The fresh readiness check passed and the separate one-task `k=1`, parallel
+sweep started at **2026-10-19 03:02:22.875 UTC**. All eight original task files,
+including the rubric, were hash checked again. There were no instruction or
+rubric changes, weight changes, cloud fallbacks, or executor timeout extensions:
+the original 2400-second limit per executor attempt and two-attempt policy
+remain (the outer rollout deadline is twice that limit plus 600 seconds). The new run root
+is `runs/local-model-64k/`, with server identity, probe responses, original task
+hashes, per-stage logs, and timestamps under `evidence/`. This snapshot still
+has no completed baseline, adaptation, judge, report, or benchmark score.
 
 ## Packaging and license checks
 
@@ -137,6 +167,18 @@ provenance documents. Downloaded dependencies, `node_modules`, virtual
 environments, runs, credentials, logs, and Python bytecode were not included in
 the wheel. The source archive includes `dependencies/ASSETS.json` and
 `scripts/check_provenance.py` so its bundled assets can be verified.
+
+A later clean wheel/UI runtime proof used wheel SHA-256
+`67a4d7bd20847b94049a83c1380e379557271644e54b5e9ef2b80234c2948eb7`
+(373,917 bytes). A new venv installed it offline and an isolated interpreter
+ran from a separate workspace outside the checkout. The installed UI completed
+the two-task, both-mode `k=2` deterministic demo, previewed `Total: 85.15`,
+resumed with zero executions and zero editor calls, and shut down with exit
+code zero. Installed Python and UI assets matched the source snapshot; the
+source `.env` and process model settings were unchanged by that proof. Its
+source archive was provisional pending the later forensics documentation
+freeze; a documentation-only change does not retroactively alter that runtime
+snapshot.
 
 The distribution metadata records
 `Apache-2.0 AND MIT AND LicenseRef-WorkBuddy-Bench` and includes eight license

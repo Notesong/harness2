@@ -303,6 +303,7 @@
   }
   function providerChanged() {
     const provider = $("#provider").value;
+    message("#settings-message", "");
     const localModel = $("#local-model").value.trim();
     if (previousProvider === "local" && provider === "vertex") {
       let cleared = false;
@@ -320,6 +321,7 @@
     ["local", "vertex", "custom"].forEach((id) => { $(`#provider-${id}`).hidden = id !== provider; });
     $("#local-token-limits").hidden = provider !== "local";
     ["local-context", "local-output"].forEach((id) => { $(`#${id}`).disabled = provider !== "local"; });
+    ["solver", "improver", "judge"].forEach((id) => { $(`#${id}`).readOnly = provider === "local"; });
     text("#test-connection", provider === "vertex" ? "Check environment" : "Test connection");
     if (provider !== "local") $("#advanced-models").open = true;
     message("#connection-test-message", "");

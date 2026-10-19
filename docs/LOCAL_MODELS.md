@@ -6,7 +6,12 @@ completions and structured tool calls. The local provider also reaches LAB's
 host OpenCode sessions, but that does not replace LAB's provider-specific judge
 integration. WorkBuddy's generated Vertex routes are a separate configuration.
 
-Start your server before running an experiment. For example, on Windows:
+Start your server before running an experiment. The following Windows recipe
+uses the 64K, thinking-off configuration tested with llama.cpp build `b11406`
+(`8216c8462`). It passed text, structured-tool, and actual 40,045-token prompt
+checks with the tested 27B Q3 model on a 16 GB RTX 5060 Ti. That establishes
+transport and context capacity; the full benchmark outcome is recorded separately
+in [the validation record](VALIDATION.md). Adapt the paths for your installation:
 
 ```powershell
 $server = 'C:\tools\llama.cpp\llama-server.exe'
@@ -15,11 +20,11 @@ $logs = Join-Path $PWD 'runs\local-server'
 New-Item -ItemType Directory -Force $logs | Out-Null
 $serverArgs = @(
   '--model', ('"{0}"' -f $model), '--host', '127.0.0.1', '--port', '8087',
-  '--alias', 'local-model', '--ctx-size', '32768', '--parallel', '1',
+  '--alias', 'local-model-64k', '--ctx-size', '65536', '--parallel', '1',
   '--cache-type-k', 'q8_0', '--cache-type-v', 'q8_0',
   '--flash-attn', 'on', '--fit', 'on', '--fit-target', '1536',
   '--batch-size', '512', '--ubatch-size', '128',
-  '--jinja', '--no-webui', '--offline', '--reasoning-budget', '2048'
+  '--jinja', '--no-webui', '--offline', '--reasoning', 'off'
 )
 $process = Start-Process -FilePath $server -ArgumentList $serverArgs `
   -WindowStyle Hidden -PassThru `
@@ -37,30 +42,35 @@ finish. A single server slot serializes requests even when the workflow submits
 independent stages concurrently.
 
 Thinking is controlled by the server's chat template. OpenCode's model
-`reasoning: false` capability does not disable template thinking. For a quick
-transport smoke test, a compatible llama.cpp build can use `--reasoning off`;
-for reasoning runs, choose an explicit `--reasoning-budget`. Keep that choice
-fixed during an experiment and record it with the server command.
+`reasoning: false` capability does not disable template thinking. The recipe uses
+`--reasoning off`; its probes did not add a request-level thinking override.
+For reasoning runs, choose an explicit `--reasoning-budget`. Keep that choice
+fixed during an experiment and record it with the server command. The earlier
+32K/4096-output reasoning run reached two compaction boundaries while its
+output directory remained empty and was manually stopped for capacity
+adjustment; see [the preserved experiment](experiments/LOCAL_COMPACTION.md).
 
 Put these settings in the checkout's ignored `.env`, or export them in the shell:
 
 ```dotenv
 HARNESS2_LOCAL_BASE_URL=http://127.0.0.1:8087/v1
-HARNESS2_LOCAL_MODEL=local-model
-HARNESS2_LOCAL_CONTEXT=32768
-HARNESS2_LOCAL_OUTPUT=4096
+HARNESS2_LOCAL_MODEL=local-model-64k
+HARNESS2_LOCAL_CONTEXT=65536
+HARNESS2_LOCAL_OUTPUT=8192
 ```
 
 The model setting must match the server's alias. The API base URL includes
 `/v1`, without `/chat/completions`. The two limits describe the server's actual
 context and the maximum completion requested by OpenCode; output must be
-smaller than context. With no explicit solver, improver, or judge settings,
+smaller than context. If omitted, the generic helper defaults remain 32768 and
+4096; those defaults do not configure or discover the server's actual limits.
+Set both explicitly to match your server. With no explicit solver, improver, or judge settings,
 this profile supplies:
 
 ```dotenv
-HARNESS2_SOLVER_MODEL=local/local-model
-HARNESS2_IMPROVER_MODEL=local/local-model
-HARNESS2_JUDGE_MODEL=local-model
+HARNESS2_SOLVER_MODEL=local/local-model-64k
+HARNESS2_IMPROVER_MODEL=local/local-model-64k
+HARNESS2_JUDGE_MODEL=local-model-64k
 HARNESS2_JUDGE_BASE_URL=http://127.0.0.1:8087/v1
 HARNESS2_JUDGE_API_KEY=local
 ```
