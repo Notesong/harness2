@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Modified for native Windows process timeouts, paths, signals and scratch cleanup.
 """Run one LAB task through the Codex CLI, the codex twin of opencode/run_opencode.py.
 
 Writes config.json, codex_session.jsonl, output/ and metrics.json last as the completion
@@ -25,6 +26,9 @@ if str(REPO) not in sys.path:
 
 from external.tts_lab import config as C  # noqa: E402
 
+from harness2.processes import remove_tree  # noqa: E402
+from harness2.processes import run as run_process  # noqa: E402
+
 SCRATCH_BASE = Path(os.environ.get("ADAPT_LABCX_SCRATCH")
                     or (RUNNER_DIR / "scratch"))
 RESULTS_ROOT = Path(os.environ.get("ADAPT_LABCX_RESULTS", str(RUNNER_DIR / "results")))
@@ -43,16 +47,16 @@ HARNESS_ENTRIES = ("AGENTS.md", ".agents", "scripts", ".codex")
 CONFIG_TOML_TEMPLATE = """\
 # Per-run CODEX_HOME (throwaway; codex writes a [projects] trust entry into this file).
 # Endpoint and model are supplied by the adapter from user configuration.
-model = "{model}"
+model = {model}
 model_provider = "harness2"
 
 [model_providers.harness2]
 name = "Configured Responses endpoint"
-base_url = "{base_url}"
+base_url = {base_url}
 wire_api = "responses"
 env_key = "VERTEX_PROXY_KEY"
 
-[projects."{workspace}"]
+[projects.{workspace}]
 trust_level = "trusted"
 """
 
@@ -195,7 +199,7 @@ def doc_coverage(summary: dict, docs_dir: Path, session_text: str) -> tuple[int,
     """How many task documents the agent touched, by path substring in the raw session."""
     if not docs_dir.is_dir():
         return 0, 0
-    rels = [str(p.relative_to(docs_dir)) for p in sorted(docs_dir.rglob("*")) if p.is_file()]
+    rels = [p.relative_to(docs_dir).as_posix() for p in sorted(docs_dir.rglob("*")) if p.is_file()]
     read = sum(1 for r in rels if r in session_text)
     return read, len(rels)
 
@@ -212,7 +216,7 @@ def reap(hours: float) -> int:
             try:
                 if d.is_dir() and d.stat().st_mtime < cutoff:
                     _require_scratch(d, "reap target")
-                    shutil.rmtree(d, ignore_errors=True)
+                    remove_tree(d, ignore_errors=True)
                     n += 1
                     print(f"reaped {d}")
             except OSError:
@@ -229,14 +233,14 @@ def main(args) -> int:
     if not CODEX_BIN.is_file():
         raise SystemExit(f"codex binary not found: {CODEX_BIN} (ADAPT_LABCX_CODEX_BIN)")
 
-    label = args.run_id.replace("/", "__")
+    label = args.run_id.replace("/", "__").replace("\\", "__")
     run_dir = run_dir_for(args.run_id)
     run_dir.mkdir(parents=True, exist_ok=True)
     tmp_root, ws, codex_home = scratch_paths(label)
 
     def _die(signum, _frame):
         raise SystemExit(128 + signum)
-    for s in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+    for s in (signal.SIGTERM, signal.SIGINT, getattr(signal, "SIGHUP", signal.SIGTERM)):
         signal.signal(s, _die)
 
     docs_src = C.documents_dir(args.task)
@@ -244,7 +248,7 @@ def main(args) -> int:
     t0 = time.time()
     try:
         for d in (tmp_root, codex_home):
-            shutil.rmtree(d, ignore_errors=True)
+            remove_tree(d, ignore_errors=True)
         (ws / "output").mkdir(parents=True)
         if docs_src.is_dir():
             shutil.copytree(docs_src, ws / "documents")
@@ -258,7 +262,9 @@ def main(args) -> int:
 
         codex_home.mkdir(parents=True)
         (codex_home / "config.toml").write_text(
-            CONFIG_TOML_TEMPLATE.format(model=args.model, base_url=BASE_URL, workspace=ws),
+            CONFIG_TOML_TEMPLATE.format(model=json.dumps(args.model, ensure_ascii=False),
+                                        base_url=json.dumps(BASE_URL, ensure_ascii=False),
+                                        workspace=json.dumps(str(ws), ensure_ascii=False)),
             encoding="utf-8")
 
         config = {
@@ -290,7 +296,6 @@ def main(args) -> int:
             "LAB_BENCH_ROOT": str(REPO),
         })
         cmd = [
-            "timeout", "--kill-after=30s", str(int(max(60, args.timeout))),
             str(CODEX_BIN), "exec", build_prompt(args.task, ws),
             "--model", args.model,
             "-c", f'model_reasoning_effort="{args.reasoning_effort}"',
@@ -306,8 +311,12 @@ def main(args) -> int:
         session_path = run_dir / "codex_session.jsonl"
         with open(session_path, "w", encoding="utf-8") as out, \
              open(run_dir / "codex_stderr.log", "w", encoding="utf-8") as err:
-            rc = subprocess.run(cmd, cwd=str(ws), env=env, stdin=subprocess.DEVNULL,
-                                stdout=out, stderr=err).returncode
+            try:
+                rc = run_process(cmd, cwd=str(ws), env=env, stdin=subprocess.DEVNULL,
+                                 stdout=out, stderr=err,
+                                 timeout=max(60, args.timeout)).returncode
+            except subprocess.TimeoutExpired:
+                rc = 124
         wall = time.time() - t0
 
         graded = run_dir / "output"
@@ -329,7 +338,7 @@ def main(args) -> int:
         session_text = session_path.read_text(encoding="utf-8", errors="replace")
         docs_read, docs_total = doc_coverage(summary, ws / "documents", session_text)
         scratch_left = sorted(str(p.relative_to(ws)) for p in ws.rglob("*")
-                              if p.is_file() and not str(p.relative_to(ws)).startswith(
+                              if p.is_file() and not p.relative_to(ws).as_posix().startswith(
                                   ("documents/", "output/")))[:200]
         metrics = {
             "runner": "codex",
@@ -362,8 +371,8 @@ def main(args) -> int:
               f"deliverables={', '.join(delivered) or 'NONE'}")
         return rc
     finally:
-        shutil.rmtree(tmp_root, ignore_errors=True)
-        shutil.rmtree(codex_home, ignore_errors=True)
+        remove_tree(tmp_root, ignore_errors=True)
+        remove_tree(codex_home, ignore_errors=True)
 
 
 parser = argparse.ArgumentParser(description="Run one LAB task through Codex CLI")
@@ -381,7 +390,7 @@ parser.add_argument("--harness-dir", default=None,
                     help="Rendered codex_root harness tree to install at the workspace root "
                          "(AGENTS.md, .agents/, scripts/, .codex/). Omit for a bare workspace.")
 parser.add_argument("--doc-parser", choices=["sandbox", "host"],
-                    default=os.environ.get("LAB_DOC_PARSER", "sandbox"),
+                    default=os.environ.get("LAB_DOC_PARSER", "host" if os.name == "nt" else "sandbox"),
                     help="Where scripts/read_doc.py parses binary documents "
                          "(default: %(default)s)")
 parser.add_argument("--reap-hours", type=float, default=None,

@@ -6,8 +6,9 @@ benchmarks, see the [benchmark guides](BENCHMARKS.md).
 
 ## Requirements
 
-Use Linux and Python 3.12 for benchmark runs; the Python package also supports
-3.13. On Debian/Ubuntu:
+Use Windows or Linux and Python 3.12 for benchmark runs; the Python package also
+supports 3.13. Windows PowerShell commands and platform requirements are in the
+[Windows guide](WINDOWS.md). On Debian/Ubuntu:
 
 ```bash
 sudo apt-get update
@@ -20,7 +21,8 @@ Pandoc and Poppler are needed by LAB. Also install:
 - [uv](https://docs.astral.sh/uv/getting-started/installation/).
 - [Google Cloud CLI](https://cloud.google.com/sdk/docs/install).
 - [Docker Engine](https://docs.docker.com/engine/install/) for WorkBuddy-Bench,
-  with permission to run `docker info`.
+  with permission to run `docker info`. Windows uses Docker Desktop with its
+  Linux container engine.
 
 Benchmark setup installs its own pinned Bun runtime under `dependencies/`.
 Keep the main Harness² environment active when running the commands below.
@@ -159,7 +161,7 @@ see [web access during evaluation](EXPERIMENTS.md#web-access).
 
 ## Wheel installations
 
-A wheel ships the `harness2` package only. The task partitioner,
+A wheel includes the `harness2` package and bundled runner assets. The task partitioner,
 `python scripts/split_tasks.py`, requires this source tree. For a wheel
 installation, work from a dedicated directory: `.env`, `dependencies/`, and
 `runs/` are resolved there.

@@ -32,6 +32,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Mapping, Sequence
 
+from harness2 import config
+from harness2.locking import file_lock
+
 from . import library as library_store
 from . import recursion, runmark, selection
 from . import tree as harness_tree
@@ -281,51 +284,50 @@ def _merged_status(merged: dict) -> str:
 
 def _load_old(path: Path) -> dict:
     try:
-        return json.loads(path.read_text())
-    except (OSError, json.JSONDecodeError):
+        value = json.loads(path.read_text(encoding="utf-8"))
+        return value if isinstance(value, dict) else {}
+    except (OSError, ValueError):
         return {}
 
 
 def _write_summary(summary_path: Path, res: TaskResult) -> None:
-    """Merge `res` into the summary under an flock, atomically, deriving the merged status.
+    """Merge `res` into the summary under a lock, atomically, deriving the merged status.
 
     Modes may be written by separate processes, so records accumulate per mode.
     """
-    import fcntl
-
+    summary_path = config.long_path(summary_path)
     lock = summary_path.with_suffix(".lock")
-    with open(lock, "w") as lf:
-        fcntl.flock(lf, fcntl.LOCK_EX)
-        try:
-            merged = res.to_dict()
-            if summary_path.is_file():
-                old = _load_old(summary_path)
-                for key in ("modes", "selections"):
-                    prev = _modes_of(old) if key == "modes" else dict(old.get(key) or {})
-                    prev.update(merged.get(key) or {})
-                    merged[key] = prev
+    with file_lock(lock):
+        merged = res.to_dict()
+        if summary_path.is_file():
+            old = _load_old(summary_path)
+            for key in ("modes", "selections"):
+                prev = _modes_of(old) if key == "modes" else dict(old.get(key) or {})
+                prev.update(merged.get(key) or {})
+                merged[key] = prev
 
-                merged["errors"] = list(merged.get("errors") or [])
-                seen = {json.dumps(e, sort_keys=True, default=str) for e in merged["errors"]}
-                for e in old.get("errors") or []:
-                    if e == "no base rollout produced anything" and res.status in ("ok", "partial"):
-                        continue
-                    mode = str(e).partition(":")[0]
-                    if (
-                        (res.modes.get(mode) or {}).get("ok")
-                        and (res.selections.get(mode) or {}).get("ok")
-                        and (res.selections.get(mode) or {}).get("chosen_label")
-                    ):
-                        continue
-                    if json.dumps(e, sort_keys=True, default=str) not in seen:
-                        merged["errors"].append(e)
-                if merged.get("status") in ("ok", "partial"):
-                    merged["status"] = _merged_status(merged)
-            tmp = summary_path.with_suffix(".json.tmp")
-            tmp.write_text(json.dumps(merged, indent=2, default=str))
+            merged["errors"] = list(merged.get("errors") or [])
+            seen = {json.dumps(e, sort_keys=True, default=str) for e in merged["errors"]}
+            for e in old.get("errors") or []:
+                if e == "no base rollout produced anything" and res.status in ("ok", "partial"):
+                    continue
+                mode = str(e).partition(":")[0]
+                if (
+                    (res.modes.get(mode) or {}).get("ok")
+                    and (res.selections.get(mode) or {}).get("ok")
+                    and (res.selections.get(mode) or {}).get("chosen_label")
+                ):
+                    continue
+                if json.dumps(e, sort_keys=True, default=str) not in seen:
+                    merged["errors"].append(e)
+            if merged.get("status") in ("ok", "partial"):
+                merged["status"] = _merged_status(merged)
+        tmp = summary_path.with_suffix(".json.tmp")
+        try:
+            tmp.write_text(json.dumps(merged, indent=2, default=str), encoding="utf-8", newline="\n")
             os.replace(tmp, summary_path)
         finally:
-            fcntl.flock(lf, fcntl.LOCK_UN)
+            tmp.unlink(missing_ok=True)
 
 
 def _resolve_libraries(
@@ -361,8 +363,10 @@ def _resume(
 ) -> bool:
     """Fill `res` from a cached summary covering every requested mode; True if it did."""
     try:
-        got = json.loads(summary_path.read_text())
-    except (OSError, json.JSONDecodeError) as exc:
+        got = json.loads(config.long_path(summary_path).read_text(encoding="utf-8"))
+        if not isinstance(got, dict):
+            raise ValueError("summary must be a JSON object")
+    except (OSError, ValueError) as exc:
         print(
             f"  [{task_id}] unreadable summary.json ({type(exc).__name__}: {exc}); re-running",
             flush=True,

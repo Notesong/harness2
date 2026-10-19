@@ -21,7 +21,7 @@ import shutil
 import subprocess
 
 from . import config
-from .install import PATCHES, missing_runners
+from .install import missing_runners, patch_source, require_linux_docker
 from .substrate.opencode import OpencodeSubstrate
 
 
@@ -34,7 +34,12 @@ def check(adapter, *, judge=False) -> list[str]:
     def probe(label, cmd, *, cwd=None, remedy="run harness2-setup for this benchmark"):
         try:
             r = subprocess.run(
-                [str(c) for c in cmd], cwd=cwd, capture_output=True, text=True, timeout=45
+                config.command(cmd),
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                timeout=45,
             )
             if r.returncode:
                 errors.append(f"{label} failed; {remedy}")
@@ -59,20 +64,33 @@ def check(adapter, *, judge=False) -> list[str]:
     repo = config.DEPENDENCIES / name
     for dependency in (name, "opencode"):
         target = config.DEPENDENCIES / dependency
-        if (target / ".git").exists():
-            try:
-                head = subprocess.check_output(
-                    ["git", "-C", str(target), "rev-parse", "HEAD"], text=True
-                ).strip()
-                if head != config.DEPENDENCY_PINS[dependency]:
-                    errors.append(f"{dependency}: checkout differs from the supported pin")
-            except subprocess.CalledProcessError:
-                errors.append(f"{dependency}: cannot read checkout revision")
-        patch = config.THIRD_PARTY / "patches" / PATCHES[dependency]
-        probe(
-            f"{dependency} patch",
-            ["git", "-C", target, "apply", "--reverse", "--check", patch],
-        )
+        if not (target / ".git").exists():
+            errors.append(f"{dependency}: no Git checkout to verify; run harness2-setup {bench}")
+            continue
+        try:
+            head = subprocess.check_output(
+                config.command(["git", "-C", str(target), "rev-parse", "HEAD"]),
+                text=True,
+                encoding="utf-8",
+            ).strip()
+            if head != config.DEPENDENCY_PINS[dependency]:
+                errors.append(f"{dependency}: checkout differs from the supported pin")
+        except (OSError, subprocess.CalledProcessError):
+            errors.append(f"{dependency}: cannot read checkout revision")
+        with patch_source(dependency) as patch:
+            probe(
+                f"{dependency} patch",
+                [
+                    "git",
+                    "-C",
+                    target,
+                    "apply",
+                    "--ignore-space-change",
+                    "--reverse",
+                    "--check",
+                    patch,
+                ],
+            )
     if not (config.OPENCODE_DIR / "node_modules").is_dir():
         errors.append(f"OpenCode dependencies missing; run harness2-setup {bench}")
 
@@ -86,7 +104,7 @@ def check(adapter, *, judge=False) -> list[str]:
     if bench == "lab":
         for binary in ("pandoc", "pdftoppm"):
             if not shutil.which(binary):
-                errors.append(f"{binary} missing; install pandoc and poppler-utils (README.md)")
+                errors.append(f"{binary} missing; install Pandoc and Poppler (README.md)")
         probe(
             "LAB document and judge dependencies",
             [config.LAB_PYTHON, "-c", "import evaluation.scoring; import google.auth, anthropic"],
@@ -114,7 +132,10 @@ def check(adapter, *, judge=False) -> list[str]:
                 "A non-Gemini JobBench judge requires HARNESS2_JUDGE_BASE_URL and HARNESS2_JUDGE_API_KEY"
             )
     elif bench == "wb":
-        probe("Docker daemon", ["docker", "info", "--format", "{{.ServerVersion}}"])
+        try:
+            require_linux_docker()
+        except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+            errors.append(f"Docker Linux engine: {exc}; see README.md")
         if adapter.spec.name == "wb-office":
             probe(
                 "WorkBuddy document rendering",
@@ -124,7 +145,7 @@ def check(adapter, *, judge=False) -> list[str]:
         probe(
             "WorkBuddy runtime",
             [
-                repo / ".venv/bin/python",
+                config.venv_python(repo),
                 "-c",
                 "import harbor; from workbuddy_bench.runner.harness_adapters import HARNESS_ADAPTERS; "
                 "assert all(k in HARNESS_ADAPTERS for k in ('opencode', 'oc-harness', 'codex-harness'))",
@@ -137,7 +158,10 @@ def check(adapter, *, judge=False) -> list[str]:
         ):
             path = repo / "configs/models/harness2" / f"{role}.yaml"
             try:
-                if json.loads(path.read_text())["model"]["name"] != "google/" + expected:
+                if (
+                    json.loads(path.read_text(encoding="utf-8"))["model"]["name"]
+                    != "google/" + expected
+                ):
                     errors.append(f"WorkBuddy {role} configuration is stale; rerun setup")
             except (OSError, ValueError, KeyError, TypeError):
                 errors.append(f"WorkBuddy {role} configuration missing; rerun setup")
@@ -149,9 +173,10 @@ def require_ready(adapter, *, judge=False):
 
     `judge=True` also demands what grading will need: `HARNESS2_JUDGE_MODEL` set, and,
     where a benchmark grades in its own environment, that environment installed and
-    pointed at an endpoint. Those are offline presence and import checks — they catch an
-    unset or unbuilt judge, not an account that cannot serve the judge model, which is
-    still first learned when the judge actually calls it.
+    pointed at an endpoint. Presence/import probes and credential-token checks can
+    detect an unset or unbuilt judge. Credential refresh may contact the provider's
+    authentication service; no judge model request is made here. Model access is still
+    first learned when the judge actually calls it.
     """
     errors = check(adapter, judge=judge)
     if errors:

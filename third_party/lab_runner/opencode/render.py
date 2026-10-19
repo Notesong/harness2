@@ -1,3 +1,4 @@
+# Modified to select the native Windows Python command in runner prompts.
 """Materialize the base harness into an OpenCode-loadable workspace.
 
 `render()` writes the single-body harness; `render_tree()` writes the eight-component tree,
@@ -8,6 +9,7 @@ sandboxed loop, and it is appended last so it wins where it conflicts.
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 from dataclasses import dataclass, field
@@ -59,6 +61,9 @@ above — where they conflict, **these win**:
    which prints the extracted text. `read` is still the right tool for plain
    text, markdown, and code.
 """
+
+if os.name == "nt":
+    ENV_DELTA = ENV_DELTA.replace("python3 ", "python ")
 
 
 def compose_prompt(skill_names: list[str], *, skill_mode: str = "inline") -> str:
@@ -302,7 +307,8 @@ def compose_body(
         p for p in (harness_dir / "scripts").glob("*.py") if not p.name.startswith("_")
     )
     if scripts:
-        listing = "\n".join(f"- `python3 scripts/{p.name}` — {_script_doc(p)}" for p in scripts)
+        python = "python" if os.name == "nt" else "python3"
+        listing = "\n".join(f"- `{python} scripts/{p.name}` — {_script_doc(p)}" for p in scripts)
         parts.append(
             "# Helper scripts (run via bash)\n\nDeterministic helpers live in `./scripts`. "
             "Prefer them over hand-rolling the same logic:\n\n" + listing

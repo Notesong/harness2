@@ -155,7 +155,7 @@ class CodexSubstrate:
         Callers use stdin=DEVNULL and `exec_env`.
         """
         return [
-            str(Path(config.CODEX_DIST) / "codex"),
+            str(config.codex_binary()),
             "exec",
             prompt,
             "--model",
@@ -213,7 +213,7 @@ class CodexSubstrate:
         url = urlparse(config.CODEX_BASE_URL)
         if url.scheme not in ("http", "https") or not url.hostname:
             raise config.ConfigError("HARNESS2_CODEX_BASE_URL must be an HTTP(S) URL")
-        binary = Path(config.CODEX_DIST) / "codex"
+        binary = config.codex_binary()
         if not binary.is_file():
             raise RuntimeError(
                 "Codex is not installed; run scripts/setup_benchmark.py with --substrate cx"

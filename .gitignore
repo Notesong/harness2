@@ -1,0 +1,13 @@
+.venv/
+.test-tmp/
+.tmp/
+.ruff_cache/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.env
+runs/
+dependencies/*/
+dependencies/*.tmp

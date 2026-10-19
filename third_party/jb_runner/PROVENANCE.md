@@ -13,8 +13,10 @@ What is still vendored here:
 
 The integration adds editable harness installation and configurable models,
 paths, and endpoints. Local model-provider names, environment variables, and
-log paths use the `harness2` namespace. The adapter invokes the Codex launcher
-directly from the package.
+log paths use the `harness2` namespace. The shell Codex launcher is retained as
+a reference; the adapter now invokes the native Python
+`harness2/benchmarks/jb_codex_runner.py` on Windows and POSIX. This preserves the
+upstream task staging, attempt index, trajectory and output conventions.
 
 The OpenCode launcher that used to sit beside it,
 `run_benchmark_opencode_harness_adapt.sh`, was a fork that shared almost nothing

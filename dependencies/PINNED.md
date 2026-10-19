@@ -23,11 +23,15 @@ checkout at another revision.
 - `workbuddy-bench-runtime.diff`: registers the release's executor adapters,
   preserves declared harness mounts, refreshes short-lived credentials, and
   preserves Gemini thought signatures across tool calls. It also fixes an
-  undefined constant in the upstream Anthropic route support.
+  undefined constant in the upstream Anthropic route support. Windows host
+  support adds native file locking, credential-command quoting, dataset staging
+  without symlink privileges, and a copy fallback when resuming trials.
 
 Patches are checked before applying and skipped if already applied. Derived runner
-files belong in `harness2/third_party/{jb,lab,wb}_runner/`, which this copy does not
-include; setup copies the LAB and WorkBuddy overlays into the upstream checkouts.
+files belong in `third_party/{jb,lab,wb}_runner/` in a source checkout and are
+packaged under `harness2/third_party/` in wheels. Setup copies the LAB and
+WorkBuddy overlays into the upstream checkouts. JobBench uses native Python
+launchers; its original Codex shell launcher remains a reference asset.
 
 The upstream dependency locks are used for Python installations. OpenCode uses
 Bun 1.3.11 and the patched lock. Codex uses the version in `config.CODEX_VERSION`.

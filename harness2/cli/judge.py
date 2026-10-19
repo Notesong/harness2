@@ -50,7 +50,7 @@ def _load_rows(path: Path) -> list[J.Scored]:
     if not path.is_file():
         return []
     try:
-        raw = json.loads(path.read_text())
+        raw = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise ValueError(f"unreadable judged cache {path}: {exc}; move it aside to rebuild")
     rows = []
@@ -94,7 +94,7 @@ def collect_selections(ns_dir: Path, modes: tuple[str, ...]) -> list[dict]:
     out: list[dict] = []
     for summary_path in sorted(ns_dir.glob("*/summary.json")):
         try:
-            summary = json.loads(summary_path.read_text())
+            summary = json.loads(summary_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             print(f"  ! skipping unreadable {summary_path}: {exc}", flush=True)
             continue
@@ -110,7 +110,7 @@ def judge_bases(adapter, ns_dir: Path) -> int:
     rows, legacy = [], 0
     for summary_path in sorted(ns_dir.glob("*/summary.json")):
         try:
-            summary = json.loads(summary_path.read_text())
+            summary = json.loads(summary_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             print(f"  ! skipping unreadable {summary_path}: {exc}", flush=True)
             continue
@@ -167,7 +167,7 @@ def main(argv: list[str] | None = None) -> int:
     ns = C.summary_namespace(adapter, args.k, seed=args.seed)
     ns_dir = C.runs_root_for(adapter) / ns
     identity = ns_dir / "config.json"
-    if identity.is_file() and json.loads(identity.read_text()).get("judge") != config.JUDGE_MODEL:
+    if identity.is_file() and json.loads(identity.read_text(encoding="utf-8")).get("judge") != config.JUDGE_MODEL:
         raise SystemExit("Judge model changed for this experiment; choose a new HARNESS2_RUNS_DIR")
     if not ns_dir.is_dir():
         raise SystemExit(

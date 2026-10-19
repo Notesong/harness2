@@ -23,7 +23,6 @@ from __future__ import annotations
 import json
 import os
 import shutil
-import signal
 import subprocess
 import tempfile
 import threading
@@ -35,6 +34,8 @@ from .. import config
 from ..core import runmark as RM
 from ..core import tree as HT
 from ..core.spec import BenchPrompts, BenchSpec, resolve_channel_model
+from ..processes import remove_tree
+from ..processes import run as run_process
 from ..substrate.base import Install, RunRequest
 from ..substrate.codex import CODEX_SURFACE, CodexSubstrate
 from ..substrate.opencode import OPENCODE_SURFACE, OpencodeSubstrate
@@ -323,6 +324,10 @@ directly with shell tools such as `cat`.
 """
 
 
+if os.name == "nt":
+    CODEX_BASE_BODY = CODEX_BASE_BODY.replace("python3 ", "python ")
+
+
 _EXTRACT_SRC = r"""
 import json, sys
 from pathlib import Path
@@ -389,9 +394,14 @@ except Exception as exc:
 def _lab_env() -> dict[str, str]:
     return {
         **os.environ,
-        "PYTHONPATH": str(config.lab_repo()),
-        "PATH": f"{config.LAB_PYTHON.parent}:{config.BUN.parent}:{config.CODEX_DIST}/codex-path:"
-        + os.environ.get("PATH", ""),
+        "PYTHONPATH": os.pathsep.join((str(config.lab_repo()), str(config.PKG.parent),
+                                      os.environ.get("PYTHONPATH", ""))),
+        "PYTHONUTF8": "1",
+        "LAB_DOC_PARSER": os.environ.get("LAB_DOC_PARSER") or
+                          ("host" if os.name == "nt" else "sandbox"),
+        "PATH": os.pathsep.join((str(config.LAB_PYTHON.parent), str(config.BUN.parent),
+                                str(Path(config.CODEX_DIST) / "codex-path"),
+                                os.environ.get("PATH", ""))),
     }
 
 
@@ -404,20 +414,10 @@ def _json_or_none(p: Path) -> dict | None:
 
 
 def run_detached(cmd: list[str], *, timeout: int, **kw) -> None:
-    """Run `cmd` in its own process group and kill the group on a wall timeout."""
-    proc = subprocess.Popen(cmd, start_new_session=True, **kw)
-    try:
-        proc.wait(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except (ProcessLookupError, PermissionError):
-            proc.kill()
-        proc.wait()
-        raise
-
-    if proc.returncode != 0:
-        raise RuntimeError(f"Benchmark runner exited with status {proc.returncode}")
+    """Run `cmd` with a native wall timeout and process-tree cleanup."""
+    result = run_process(cmd, timeout=timeout, **kw)
+    if result.returncode != 0:
+        raise RuntimeError(f"Benchmark runner exited with status {result.returncode}")
 
 
 def _require_runner(path: Path) -> None:
@@ -439,7 +439,7 @@ def _opencode_base_body(skill_mode: str) -> str:
             cwd=config.lab_repo(),
             env=_lab_env(),
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             timeout=300,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
@@ -709,7 +709,7 @@ class LabAdapter:
 
             env = {
                 **_lab_env(),
-                "ADAPT_LABCX_CODEX_BIN": str(Path(config.CODEX_DIST) / "codex"),
+                "ADAPT_LABCX_CODEX_BIN": str(config.codex_binary()),
                 "ADAPT_LABCX_RESULTS": str(self._results_root),
                 "ADAPT_LABCX_SCRATCH": os.environ.get("ADAPT_LABCX_SCRATCH")
                 or str(config.RUNS / "lab" / "scratch"),
@@ -740,7 +740,7 @@ class LabAdapter:
         root = self._results_root.resolve()
         if root != d and root not in d.parents:
             raise RuntimeError(f"refusing to remove {d}: outside the LAB results root {root}")
-        shutil.rmtree(d, ignore_errors=True)
+        remove_tree(d, ignore_errors=True)
 
     def _output_fingerprint(self, run_dir: Path) -> str | None:
         return RM.fingerprint(Path(run_dir) / "output") if self.delivered(run_dir) else None
@@ -783,7 +783,7 @@ class LabAdapter:
                 cwd=config.lab_repo(),
                 env=_lab_env(),
                 capture_output=True,
-                text=True,
+                text=True, encoding="utf-8", errors="replace",
                 timeout=600,
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
@@ -859,7 +859,7 @@ class LabAdapter:
                     cwd=config.lab_repo(),
                     env=_lab_env(),
                     capture_output=True,
-                    text=True,
+                    text=True, encoding="utf-8", errors="replace",
                     timeout=300,
                 )
                 got = json.loads(r.stdout)
@@ -946,7 +946,7 @@ class LabAdapter:
                 cwd=config.lab_repo(),
                 env=_lab_env(),
                 capture_output=True,
-                text=True,
+                text=True, encoding="utf-8", errors="replace",
                 timeout=120,
             )
         except (OSError, subprocess.TimeoutExpired) as exc:

@@ -34,6 +34,9 @@ import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Mapping, Sequence
+from urllib.parse import quote
+
+from harness2 import config
 
 from . import tree as harness_tree
 from .spec import BenchmarkAdapter, RunView
@@ -121,7 +124,8 @@ def build(
     recorded as a stage error; only the trajectory and deliverable readers are caught,
     because their failure is itself evidence.
     """
-    dest = Path(dest)
+    original_dest = Path(dest)
+    dest = config.long_path(original_dest)
 
     if dest.exists():
         shutil.rmtree(dest)
@@ -174,7 +178,7 @@ def build(
             "on nothing: " + "; ".join(failed_r[:4])
         )
     return ContextTree(
-        root=dest,
+        root=original_dest,
         task_id=task_id,
         rollouts=got_r,
         deliverables=got_d,
@@ -218,7 +222,7 @@ def copy_source(adapter: BenchmarkAdapter, task_id: str, root: Path) -> int:
 
 def _write_rollout(dest: Path, r: RunView, adapter, trunc: int, names_only: bool) -> str:
     """Write one rollout's trajectory and deliverables; return "" or the failure detail."""
-    failure = ""
+    failure = f"{r.label}: {r.error}" if r.error else ""
     try:
         (dest / "rollouts" / f"{r.label}.md").write_text(
             adapter.trajectory(r.run_dir, obs_trunc=trunc), encoding="utf-8"
@@ -227,7 +231,7 @@ def _write_rollout(dest: Path, r: RunView, adapter, trunc: int, names_only: bool
         (dest / "rollouts" / f"{r.label}.md").write_text(
             f"(trajectory unavailable: {type(exc).__name__}: {exc})", encoding="utf-8"
         )
-        failure = f"{r.label}: {type(exc).__name__}: {exc}"
+        failure = failure or f"{r.label}: {type(exc).__name__}: {exc}"
 
     per_file: dict[str, str] = {}
     if names_only:
@@ -235,7 +239,10 @@ def _write_rollout(dest: Path, r: RunView, adapter, trunc: int, names_only: bool
     else:
         files_fn = getattr(adapter, "deliverable_files", None)
         if callable(files_fn):
-            per_file = dict(files_fn(r.run_dir) or {})
+            try:
+                per_file = dict(files_fn(r.run_dir) or {})
+            except (OSError, ValueError) as exc:
+                failure = failure or f"{r.label}: {type(exc).__name__}: {exc}"
     if not per_file:
         if not names_only:
             try:
@@ -254,10 +261,16 @@ def _write_rollout(dest: Path, r: RunView, adapter, trunc: int, names_only: bool
             shutil.copy2(img, t)
         except OSError:
             pass
-    for name, body in per_file.items():
-        safe = str(name).replace("/", "__") or "unnamed"
+    text_names: dict[str, str] = {}
+    for index, (name, body) in enumerate(per_file.items(), 1):
+        # Artifact names can contain Windows separators, reserved device names,
+        # stream syntax, or names differing only by case. A numbered ASCII name
+        # keeps every extracted artifact distinct and inside this directory.
+        safe = quote(str(name).replace("\\", "/").replace("/", "__"), safe="-_.")
+        safe = f"{index:03d}__{safe[:160] or 'unnamed'}"
         suffix = "" if safe.endswith(".txt") else ".txt"
-        (d / f"{safe}{suffix}").write_text(str(body), encoding="utf-8")
+        text_names[name] = safe + suffix
+        (d / text_names[name]).write_text(str(body), encoding="utf-8")
     raw_fn = getattr(adapter, "deliverable_assets", None)
     raw_names: list[str] = []
     for src in raw_fn(r.run_dir) if callable(raw_fn) else []:
@@ -276,7 +289,8 @@ def _write_rollout(dest: Path, r: RunView, adapter, trunc: int, names_only: bool
     )
     (d / "INDEX.md").write_text(
         f"# {r.label} produced {len(per_file)} file(s)\n\n"
-        + "\n".join(f"- `{n}`  ({len(str(b)):,} chars extracted)" for n, b in per_file.items())
+        + "\n".join(f"- `{n}` -> `{text_names[n]}`  ({len(str(b)):,} chars extracted)"
+                    for n, b in per_file.items())
         + "\n\nEach `.txt` is the artifact converted to text by the SAME reader the "
         "work\nis assessed through, so reason about correctness from these -- an "
         "artifact\nthat does not survive that conversion is treated as unreadable "

@@ -94,6 +94,7 @@ class DemoAdapter:
             [sys.executable, str(script), str(self.task_files(task_id) / "ledger.csv")],
             capture_output=True,
             text=True,
+            encoding="utf-8",
             check=True,
             timeout=timeout or 10,
         )
@@ -130,15 +131,15 @@ class DemoProposer(Proposer):
                 )
             candidates = sorted((context / "candidates").glob("*.md"))
             chosen = next(
-                path.stem for path in candidates if f"Total: {expected:.2f}" in path.read_text()
+                path.stem for path in candidates if f"Total: {expected:.2f}" in path.read_text(encoding="utf-8")
             )
             text = (
                 f"<why>The signed total matches the source ledger.</why>\n```choice\n{chosen}\n```"
             )
         elif label.startswith("experience."):
-            changed = (context / "harness/scripts/summarize.py").read_text() != (
+            changed = (context / "harness/scripts/summarize.py").read_text(encoding="utf-8") != (
                 context / "base_harness/scripts/summarize.py"
-            ).read_text()
+            ).read_text(encoding="utf-8")
             text = (
                 "<edits>\ncomponent: scripts/summarize.py\ncandidates: inv1\n"
                 "change: dropped the positive-only filter from the amount sum\n"
@@ -156,7 +157,7 @@ class DemoProposer(Proposer):
         else:
             workspace = context / "harness"
             script = workspace / "scripts/summarize.py"
-            script.write_text(script.read_text().replace(" if amount > 0", ""), encoding="utf-8")
+            script.write_text(script.read_text(encoding="utf-8").replace(" if amount > 0", ""), encoding="utf-8")
             text = "<notes>Keep signed amounts: the base total omitted credits in the source ledger.</notes>"
         reply = Reply(label=label, text=text, ok=True, attempts=1, workspace=workspace)
         self._calls.append(reply)

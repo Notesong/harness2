@@ -17,15 +17,53 @@
 from __future__ import annotations
 
 import os
+import shutil
 import sys
 from pathlib import Path
 
 PKG = Path(__file__).resolve().parent
 ROOT = PKG.parent if (PKG.parent / "pyproject.toml").is_file() else Path.cwd()
-THIRD_PARTY = ROOT / "third_party"
+# Runner assets belong to the installed distribution. The invocation directory
+# only supplies writable dependencies/runs and .env; a coincidental third_party/
+# there must not replace the bundled patches and license notices.
+THIRD_PARTY = PKG / "third_party"
+if not THIRD_PARTY.is_dir():
+    THIRD_PARTY = PKG.parent / "third_party"
 METHOD_VERSION = 2
 
 DEPENDENCIES = ROOT / "dependencies"
+IS_WINDOWS = os.name == "nt"
+
+
+def executable_name(name: str) -> str:
+    """The native executable filename for this host."""
+    return name + ".exe" if IS_WINDOWS and not Path(name).suffix else name
+
+
+def venv_python(repo: Path) -> Path:
+    """Return a dependency's interpreter without depending on shell activation."""
+    return Path(repo) / ".venv" / ("Scripts/python.exe" if IS_WINDOWS else "bin/python")
+
+
+def long_path(path: Path) -> Path:
+    """Allow deep benchmark trees without requiring Windows's global MAX_PATH setting."""
+    path = Path(path)
+    if not IS_WINDOWS:
+        return path
+    absolute = os.path.abspath(path)
+    if absolute.startswith("\\\\?\\"):
+        return Path(absolute)
+    if absolute.startswith("\\\\"):
+        return Path("\\\\?\\UNC\\" + absolute[2:])
+    return Path("\\\\?\\" + absolute)
+
+
+def command(args) -> list[str]:
+    """Resolve PATH commands, including Windows npm/gcloud .cmd launchers."""
+    result = [str(arg) for arg in args]
+    if result and Path(result[0]).name == result[0]:
+        result[0] = shutil.which(result[0]) or result[0]
+    return result
 
 
 class ConfigError(RuntimeError):
@@ -39,8 +77,8 @@ def load_dotenv(path: Path = ROOT / ".env") -> None:
     double-quoted values. A missing or unreadable file is not an error.
     """
     try:
-        text = Path(path).read_text(encoding="utf-8")
-    except OSError:
+        text = Path(path).read_text(encoding="utf-8-sig")
+    except (OSError, UnicodeError):
         return
     for raw in text.splitlines():
         line = raw.strip()
@@ -128,13 +166,31 @@ def lab_repo() -> Path:
 
 
 OPENCODE_DIR = DEPENDENCIES / "opencode"
-BUN = DEPENDENCIES / "tools" / "node_modules" / ".bin" / "bun"
-LAB_PYTHON = lab_repo() / ".venv" / "bin" / "python"
+
+
+def bun_binary() -> Path:
+    """Use Bun's native binary; Windows npm .cmd shims require a shell."""
+    modules = DEPENDENCIES / "tools" / "node_modules"
+    if IS_WINDOWS:
+        candidates = (
+            modules / "bun" / "bin" / "bun.exe",
+            modules / ".bin" / "bun.exe",
+            modules / "@oven" / "bun-windows-x64" / "bun.exe",
+            modules / "@oven" / "bun-windows-aarch64" / "bun.exe",
+            modules / ".bin" / "bun.cmd",
+        )
+    else:
+        candidates = (modules / ".bin" / "bun", modules / "bun" / "bin" / "bun")
+    return next((path for path in candidates if path.is_file()), candidates[0])
+
+
+BUN = bun_binary()
+LAB_PYTHON = venv_python(lab_repo())
 LAB_JUDGE_MODEL = (
     "vertex/" + JUDGE_MODEL if JUDGE_MODEL.startswith(("claude", "gemini")) else JUDGE_MODEL
 )
 LAB_DELIV_CAP = 60000
-JB_JUDGE_PYTHON = jb_repo() / ".venv" / "bin" / "python"
+JB_JUDGE_PYTHON = venv_python(jb_repo())
 JB_JUDGE_MODEL = (
     "google/" + JUDGE_MODEL
     if JUDGE_MODEL.startswith("gemini") and not env("HARNESS2_JUDGE_BASE_URL")
@@ -157,6 +213,14 @@ JB_OBS_TRUNC = 50000
 
 CODEX_VERSION = "0.144.6"
 CODEX_DIST = str(DEPENDENCIES / "codex" / "dist")
+CODEX_CONTAINER_DIST = str(DEPENDENCIES / "codex" / "dist-linux") if IS_WINDOWS else CODEX_DIST
+
+
+def codex_binary() -> Path:
+    """The staged native Codex executable, distinct from the Linux Docker copy."""
+    return Path(CODEX_DIST) / executable_name("codex")
+
+
 CODEX_BASE_URL = env("HARNESS2_CODEX_BASE_URL", "")
 CODEX_CONTAINER_URL = env("HARNESS2_CODEX_CONTAINER_URL", CODEX_BASE_URL)
 VERTEX_PROXY_KEY = env("HARNESS2_CODEX_API_KEY", "")

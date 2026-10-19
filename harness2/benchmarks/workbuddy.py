@@ -40,6 +40,7 @@ from ..core import runmark as RM
 from ..core import tree as HT
 from ..core.selection import order_graded_first
 from ..core.spec import BenchPrompts, BenchSpec, resolve_channel_model
+from ..processes import start, terminate_tree
 from ..substrate import opencode as OC
 from ..substrate.base import Install, RunRequest
 from ..substrate.codex import CODEX_SURFACE, CodexSubstrate
@@ -456,18 +457,9 @@ def _log(msg: str) -> None:
 
 
 def _kill_group(proc: "subprocess.Popen", sig: int, *, grace: int) -> None:
-    """Signal the whole process group, wait out `grace`, then SIGKILL what is left."""
-    for attempt in (sig, signal.SIGKILL):
-        try:
-            os.killpg(proc.pid, attempt)
-        except (ProcessLookupError, PermissionError):
-            proc.kill()
-        try:
-            proc.communicate(timeout=grace)
-            return
-        except subprocess.TimeoutExpired:
-            continue
-    proc.wait()
+    """Stop the whole job tree, including the Windows native launcher and proxy."""
+    terminate_tree(proc, grace=grace)
+    proc.communicate()
 
 
 def _label_lock(label: str) -> threading.Lock:
@@ -525,7 +517,7 @@ def _job_yaml(
             "environment_override:\n"
             "  mounts:\n"
             "    - type: bind\n"
-            f"      source: {config.CODEX_DIST}\n"
+            f"      source: {json.dumps(str(config.CODEX_CONTAINER_DIST))}\n"
             "      target: /opt/codex\n"
             "      read_only: true\n"
             "env_override:\n"
@@ -620,19 +612,24 @@ def run_batch(
         env = {
             **os.environ,
             "NO_FORCE_BUILD": "1",
+            "PYTHONUTF8": "1",
+            "PYTHONPATH": os.pathsep.join((str(config.PKG.parent),
+                                          str(config.wb_repo() / "src"),
+                                          os.environ.get("PYTHONPATH", ""))),
             "HARNESS2_WB_VERTEX_URL": config.VERTEX_OPENAI_URL + "/chat/completions",
         }
         try:
             with _slots[substrate]:
                 _log(f"{label}: {len(todo)} task(s) x k={k} [{substrate}]")
-                proc = subprocess.Popen(
-                    ["uv", "run", "./scripts/run.sh", "--job", slug],
+                proc = start(
+                    (["uv", "run", "python", "-m", "harness2.benchmarks.wb_native_runner",
+                      "--job", slug] if os.name == "nt" else
+                     ["uv", "run", "./scripts/run.sh", "--job", slug]),
                     cwd=config.wb_repo(),
                     env=env,
-                    start_new_session=True,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
-                    text=True,
+                    text=True, encoding="utf-8", errors="replace",
                 )
                 try:
                     _, errtxt = proc.communicate(timeout=timeout_s)
@@ -640,6 +637,11 @@ def run_batch(
                     _log(f"{label}: TIMEOUT after {timeout_s}s -- stopping the job group")
                     _kill_group(proc, signal.SIGTERM, grace=180)
                     _, errtxt = "", "[timeout: job group killed]"
+                except BaseException:
+                    _kill_group(proc, signal.SIGTERM, grace=5)
+                    raise
+                finally:
+                    terminate_tree(proc)
                 if proc.returncode not in (0, None):
                     _log(
                         f"{label}: run.sh exit {proc.returncode} "
@@ -935,7 +937,7 @@ class WbAdapter:
         """Check the benchmark checkout and executor before starting containers."""
         if shutil.which("uv") is None:
             raise RuntimeError(
-                "`uv` is not on PATH; WB batches run as `uv run ./scripts/run.sh` inside "
+                "`uv` is not on PATH; WB batches use the benchmark's uv environment inside "
                 "the benchmark repo (see docs/BENCHMARKS.md)"
             )
         repo = config.wb_repo()

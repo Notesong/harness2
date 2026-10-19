@@ -26,8 +26,10 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from ..processes import run as run_process
+
 JOBBENCH = Path(__file__).resolve().parents[1]
-TEMP_BASE = Path("/tmp/hevo_ws")
+TEMP_BASE = Path(tempfile.gettempdir()) / "hevo_ws"
 TRAJ_DIR_NAME = "model_traj"
 EVENT_PREFIX = '{"type":'
 
@@ -119,11 +121,10 @@ def _permission(workspace: Path) -> str:
         {
             "external_directory": {
                 "*": "deny",
-                "/tmp": "allow",
-                "/tmp/*": "allow",
-                "/tmp/**": "allow",
-                f"{TEMP_BASE}/*": "allow",
-                f"{workspace}/**": "allow",
+                Path(tempfile.gettempdir()).as_posix(): "allow",
+                f"{Path(tempfile.gettempdir()).as_posix()}/**": "allow",
+                f"{TEMP_BASE.as_posix()}/*": "allow",
+                f"{workspace.as_posix()}/**": "allow",
             }
         }
     )
@@ -150,9 +151,6 @@ def _stage(task_dir: Path, render_dir: Path, workspace: Path) -> None:
 
 def _command(cfg: Settings, workspace: Path, prompt: str, title: str) -> list[str]:
     cmd = [
-        "timeout",
-        "--kill-after=30s",
-        cfg.timeout_per_task,
         "bun",
         "run",
         "--cwd",
@@ -193,13 +191,18 @@ def _attempt(
     handle, raw = tempfile.mkstemp(prefix=f".{task_name}_a{attempt}.stdout.", dir=traj_file.parent)
     os.close(handle)
     with open(raw, "w", encoding="utf-8") as out, log_file.open("a", encoding="utf-8") as err:
-        code = subprocess.run(
-            _command(cfg, workspace, prompt, title),
-            cwd=cfg.opencode_dir,
-            env={**os.environ, "OPENCODE_PERMISSION": _permission(workspace)},
-            stdout=out,
-            stderr=err,
-        ).returncode
+        try:
+            code = run_process(
+                _command(cfg, workspace, prompt, title),
+                cwd=cfg.opencode_dir,
+                env={**os.environ, "OPENCODE_PERMISSION": _permission(workspace)},
+                stdin=subprocess.DEVNULL,
+                stdout=out,
+                stderr=err,
+                timeout=float(cfg.timeout_per_task),
+            ).returncode
+        except subprocess.TimeoutExpired:
+            code = 124
     with open(raw, encoding="utf-8", errors="replace") as src:
         traj_file.write_text(
             "".join(ln for ln in src if ln.startswith(EVENT_PREFIX)), encoding="utf-8"

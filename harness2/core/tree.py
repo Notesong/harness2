@@ -28,6 +28,8 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
+from harness2 import config
+
 Tree = dict[str, str]
 
 
@@ -81,12 +83,41 @@ def _rx(surface: SurfaceSpec) -> dict[str, re.Pattern]:
 
 def normalize_rel(rel: str) -> str:
     """Normalise a relative path, rejecting escapes before it is joined to a directory."""
-    r = str(rel).strip().replace("\\", "/")
+    r = str(rel).replace("\\", "/")
     if r.startswith("/") or ".." in r.split("/"):
         raise ValueError(f"path escapes the harness: {rel!r}")
-    while r.startswith("./"):
-        r = r[2:]
-    return r.strip("/")
+    parts = [part for part in r.split("/") if part and part != "."]
+    if not parts:
+        raise ValueError(f"empty harness path: {rel!r}")
+    for part in parts:
+        # Reject Win32 aliases on every host so a saved tree remains portable.
+        # A colon can introduce either a drive or an NTFS alternate data stream.
+        if (any(c in '<>:"|?*' or ord(c) < 32 for c in part)
+                or part.endswith((".", " "))
+                or re.fullmatch(r"(?i:CON|PRN|AUX|NUL|COM[1-9¹²³]|LPT[1-9¹²³])",
+                                part.partition(".")[0])):
+            raise ValueError(f"non-portable harness path: {rel!r}")
+    return "/".join(parts)
+
+
+def _normalized_tree(tree: Tree) -> Tree:
+    """Validate all destination names before deleting any existing files."""
+    normalized: Tree = {}
+    names: dict[str, str] = {}
+    for rel, content in tree.items():
+        canonical = normalize_rel(rel)
+        key = canonical.casefold()
+        if key in names:
+            raise ValueError(f"harness paths collide: {names[key]!r} and {rel!r}")
+        names[key] = rel
+        normalized[canonical] = content
+    for key, rel in names.items():
+        parent = key.rpartition("/")[0]
+        while parent:
+            if parent in names:
+                raise ValueError(f"harness file/directory paths collide: {names[parent]!r} and {rel!r}")
+            parent = parent.rpartition("/")[0]
+    return normalized
 
 
 def is_allowed(surface: SurfaceSpec, rel: str) -> bool:
@@ -129,7 +160,7 @@ def read_tree(surface: SurfaceSpec, d: Path | str, *, rejected: list[str] | None
 
     Pass `rejected` to collect paths that exist on disk but are off the surface.
     """
-    d = Path(d)
+    d = config.long_path(d)
     out: Tree = {}
     if not d.is_dir():
         return out
@@ -137,7 +168,7 @@ def read_tree(surface: SurfaceSpec, d: Path | str, *, rejected: list[str] | None
     for p in sorted(d.rglob("*")):
         if not p.is_file() or "__pycache__" in p.parts:
             continue
-        rel = str(p.relative_to(d))
+        rel = p.relative_to(d).as_posix()
         if rel in stubs:
             continue
         if not is_allowed(surface, rel):
@@ -149,7 +180,7 @@ def read_tree(surface: SurfaceSpec, d: Path | str, *, rejected: list[str] | None
 
 
 def is_tree(surface: SurfaceSpec, d: Path | str) -> bool:
-    d = Path(d)
+    d = config.long_path(d)
     return d.is_dir() and any((d / a).is_file() for a in surface.always_on)
 
 
@@ -158,13 +189,15 @@ def write_tree(surface: SurfaceSpec, tree: Tree, dest: Path | str, *, stubs: boo
 
     Files outside the editable surface are preserved; editable files already there are not.
     """
-    dest = Path(dest)
+    tree = _normalized_tree(tree)
+    original_dest = Path(dest)
+    dest = config.long_path(original_dest)
     dest.mkdir(parents=True, exist_ok=True)
     stub_set = _stub_paths(surface)
     for p in sorted(dest.rglob("*"), reverse=True):
         if not p.is_file():
             continue
-        rel = str(p.relative_to(dest))
+        rel = p.relative_to(dest).as_posix()
         if is_allowed(surface, rel) or rel in stub_set:
             p.unlink()
     for a in surface.always_on:
@@ -175,14 +208,14 @@ def write_tree(surface: SurfaceSpec, tree: Tree, dest: Path | str, *, stubs: boo
     for rel, content in tree.items():
         p = dest / normalize_rel(rel)
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(content, encoding="utf-8")
+        p.write_text(content, encoding="utf-8", newline="\n")
     if stubs:
         for rel, body in surface.stubs:
             p = dest / rel
             p.parent.mkdir(parents=True, exist_ok=True)
             if not p.exists():
-                p.write_text(body, encoding="utf-8")
-    return dest
+                p.write_text(body, encoding="utf-8", newline="\n")
+    return original_dest
 
 
 def always_on_text(surface: SurfaceSpec, tree: Tree) -> str:
@@ -342,6 +375,7 @@ def validate(
     reserved_scripts: frozenset[str] | set[str] = RESERVED_SCRIPTS,
 ) -> dict:
     """Raise ValueError listing every problem; return a census of the validated tree."""
+    _normalized_tree(tree)
     errs: list[str] = []
     r = _rx(surface)
     cap = surface.always_on_max if always_on_max is None else always_on_max

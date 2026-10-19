@@ -80,8 +80,17 @@ inside the tool loop.
 
 ## Install
 
-Use **Linux, Python 3.12, and [uv](https://docs.astral.sh/uv/getting-started/installation/)**.
-From the repository root:
+Use **Windows or Linux, Python 3.12, and [uv](https://docs.astral.sh/uv/getting-started/installation/)**.
+On Windows, run these commands in PowerShell from the repository root:
+
+```powershell
+uv venv --python 3.12 .venv
+uv pip install --python .venv/Scripts/python.exe -e '.[render]'
+.\.venv\Scripts\harness2-demo.exe --output runs/demo --k 2
+```
+
+See the [Windows guide](docs/WINDOWS.md) for benchmark setup, dependencies, and
+the distinction between native execution and Docker tasks. On Linux:
 
 ```bash
 uv venv --python 3.12 .venv

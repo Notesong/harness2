@@ -133,7 +133,7 @@ def _component_index(staged: Path, pattern: str) -> str:
     """One "- name: description" line per component matching `pattern`, or ""."""
     found = sorted(staged.glob(pattern), key=lambda p: p.parent.name)
     return "\n".join(
-        f"- `{p.parent.name}`: {_frontmatter_desc(p.read_text(errors='replace'))}" for p in found
+        f"- `{p.parent.name}`: {_frontmatter_desc(p.read_text(errors='replace', encoding="utf-8"))}" for p in found
     )
 
 
@@ -146,7 +146,7 @@ def compose_prompt(staged: Path) -> str:
     parts = [
         t
         for f in OPENCODE_SURFACE.always_on
-        if (staged / f).is_file() and (t := (staged / f).read_text(errors="replace").strip())
+        if (staged / f).is_file() and (t := (staged / f).read_text(errors="replace", encoding="utf-8").strip())
     ]
     idx = _component_index(staged, "skills/*/SKILL.md")
     if idx:
@@ -275,9 +275,11 @@ class OpencodeSubstrate:
     ) -> dict[str, str]:
         """The reference permission fence and output-token ceiling; see run_argv. Without
         OPENCODE_PERMISSION the session auto-rejects reads of its own working tree."""
-        allow = {"*": "deny", str(workspace): "allow", f"{workspace}/**": "allow"}
+        root = workspace.as_posix()
+        allow = {"*": "deny", root: "allow", f"{root}/**": "allow"}
         for root in extra_allowed:
-            allow[str(root)] = "allow"
+            root = Path(root).as_posix()
+            allow[root] = "allow"
             allow[f"{root}/**"] = "allow"
         env = dict(base_env)
         env["OPENCODE_PERMISSION"] = json.dumps({"external_directory": allow})
@@ -315,8 +317,8 @@ class OpencodeSubstrate:
             )
         if not config.BUN.is_file():
             raise RuntimeError(
-                f"bun not found at {config.BUN}: install bun on PATH or at ~/.bun/bin/bun "
-                f"(the upstream OpenCode is run from source through bun)."
+                f"bun not found at {config.BUN}: run harness2-setup <benchmark> "
+                f"to install the pinned runtime (OpenCode runs from source through Bun)."
             )
 
 

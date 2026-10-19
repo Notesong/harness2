@@ -1,3 +1,4 @@
+# Modified for native Windows process timeouts, executables and scratch cleanup.
 """Run one LAB task through OpenCode.
 
     uv run python -m opencode.run_opencode \
@@ -27,9 +28,10 @@ from harness.tools import get_all_tool_definitions
 from opencode import session as oc_session
 from opencode.render import RenderResult, render_tree
 from utils.stdio import force_utf8_stdio
+from harness2.processes import remove_tree, run as run_process
 
 DEFAULT_OPENCODE_DIR = Path(os.environ.get("OPENCODE_DIR", ""))
-DEFAULT_BUN = Path.home() / ".bun" / "bin" / "bun"
+DEFAULT_BUN = Path.home() / ".bun" / "bin" / ("bun.exe" if os.name == "nt" else "bun")
 
 # OpenCode caps output at 32k and the thinking budget eats that cap, truncating turns
 # before the deliverable is written. Raise to the model's real output limit.
@@ -154,7 +156,8 @@ def build_env(workspace: Path, doc_parser: str) -> dict:
     env = os.environ.copy()
     env["XDG_DATA_HOME"] = str(workspace / ".ocdata")
     env["OPENCODE_PERMISSION"] = json.dumps(
-        {"external_directory": {"*": "deny", str(workspace): "allow", f"{workspace}/**": "allow"}}
+        {"external_directory": {"*": "deny", workspace.as_posix(): "allow",
+                                f"{workspace.as_posix()}/**": "allow"}}
     )
     env["OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX"] = OUTPUT_TOKEN_MAX
     env["LAB_DOC_PARSER"] = doc_parser
@@ -170,10 +173,12 @@ def invoke(args_extra: list[str], *, base: list[str], env: dict, timeout: int,
     """One `opencode run`, appending its JSON stream to session_path."""
     with open(session_path, "a" if append else "w", encoding="utf-8") as out, \
          open(log_path, "a", encoding="utf-8") as err:
-        proc = subprocess.run(
-            ["timeout", "--kill-after=30s", str(int(max(30, timeout)))] + base + args_extra,
-            stdout=out, stderr=err, env=env, cwd=str(BENCH_ROOT),
-        )
+        try:
+            proc = run_process(base + args_extra,
+                               stdin=subprocess.DEVNULL, stdout=out, stderr=err,
+                               env=env, cwd=str(BENCH_ROOT), timeout=max(30, timeout))
+        except subprocess.TimeoutExpired:
+            return 124
     return proc.returncode
 
 
@@ -201,7 +206,7 @@ def main(args) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     if docs_dest.exists():
-        shutil.rmtree(docs_dest)
+        remove_tree(docs_dest)
     shutil.copytree(task["docs_dir"], docs_dest)
     for p in docs_dest.rglob("*"):
         if p.is_file():
@@ -408,7 +413,8 @@ parser.add_argument("--extra-tools", nargs="*", default=[], metavar="TOOL",
                          "'task' for subagents. Empty by default: the base gate is tool-matched "
                          "to the native harness, and anything added here breaks that match, so "
                          "such runs are not comparable to native baselines.")
-parser.add_argument("--doc-parser", choices=["sandbox", "host"], default="sandbox",
+parser.add_argument("--doc-parser", choices=["sandbox", "host"],
+                    default=os.environ.get("LAB_DOC_PARSER", "host" if os.name == "nt" else "sandbox"),
                     help="Where scripts/read_doc.py parses binary documents (default: %(default)s)")
 parser.add_argument("--opencode-dir", default=DEFAULT_OPENCODE_DIR, help="OpenCode checkout root")
 parser.add_argument("--bun", default=DEFAULT_BUN, help="Path to the bun binary")
