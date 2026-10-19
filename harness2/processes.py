@@ -12,9 +12,12 @@ import shutil
 import signal
 import stat
 import subprocess
+import threading
 from typing import Any
 
 from . import config
+
+_TERMINATION_LOCK_GUARD = threading.Lock()
 
 
 def _windows_job(proc: subprocess.Popen) -> None:
@@ -135,6 +138,7 @@ def start(args, **kwargs) -> subprocess.Popen:
         options["creationflags"] = (options.get("creationflags", 0)
                                     | subprocess.CREATE_NEW_PROCESS_GROUP | 0x00000004)
     proc = subprocess.Popen(args, **options)
+    proc._harness2_terminate_lock = threading.RLock()
     if os.name == "nt":
         try:
             _windows_job(proc)
@@ -179,6 +183,22 @@ def popen_group_kwargs() -> dict[str, Any]:
 
 def terminate_tree(proc: subprocess.Popen, *, grace: float = 0) -> None:
     """Stop the full child tree, escalating after an optional graceful interval."""
+    # UI cancellation, a deadline timer, and a worker's finally block can all
+    # arrive together. Protect the entire operation, including Job handle close,
+    # and make later requests a no-op after successful cleanup. The guard also
+    # initializes ownership safely for callers passing an ordinary Popen.
+    with _TERMINATION_LOCK_GUARD:
+        lock = getattr(proc, "_harness2_terminate_lock", None)
+        if lock is None:
+            lock = proc._harness2_terminate_lock = threading.RLock()
+    with lock:
+        if getattr(proc, "_harness2_tree_terminated", False):
+            return
+        _terminate_tree(proc, grace=grace)
+        proc._harness2_tree_terminated = True
+
+
+def _terminate_tree(proc: subprocess.Popen, *, grace: float) -> None:
     if os.name == "nt":
         if grace and proc.poll() is None:
             try:

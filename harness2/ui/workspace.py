@@ -19,6 +19,7 @@ from ..local_models import (
 from ..local_models import (
     validate_api_base_url as validate_url,
 )
+from ..local_server import validate_managed_settings
 
 FIELDS = {
     "project": "GOOGLE_CLOUD_PROJECT",
@@ -30,6 +31,9 @@ FIELDS = {
     "local_model": "HARNESS2_LOCAL_MODEL",
     "local_context": "HARNESS2_LOCAL_CONTEXT",
     "local_output": "HARNESS2_LOCAL_OUTPUT",
+    "local_runtime": "HARNESS2_LOCAL_RUNTIME",
+    "local_executable": "HARNESS2_LOCAL_EXECUTABLE",
+    "local_weights": "HARNESS2_LOCAL_WEIGHTS",
     "codex_url": "HARNESS2_CODEX_BASE_URL",
     "codex_model": "HARNESS2_CODEX_MODEL",
     "provider": "HARNESS2_UI_PROVIDER",
@@ -104,6 +108,7 @@ class Workspace:
         result["local_model"] = result["local_model"] or "qwen3.8-local"
         result["local_context"] = result["local_context"] or "32768"
         result["local_output"] = result["local_output"] or "4096"
+        result["local_runtime"] = result["local_runtime"] or "external"
         result["key_configured"] = any(env.get(name) for name in SECRET_FIELDS)
         return result
 
@@ -136,6 +141,10 @@ class Workspace:
             raise ValueError("Maximum local output must be smaller than the local context window.")
         if current["provider"] not in ("local", "vertex", "custom"):
             raise ValueError("Choose a local, Vertex, or custom connection.")
+        if current["local_runtime"] not in ("external", "managed"):
+            raise ValueError("Choose an existing server or automatic local model management.")
+        if current["provider"] != "local":
+            current["local_runtime"] = "external"
         if current["provider"] == "local":
             current["local_url"] = validate_url(current["local_url"])
             if not current["local_model"] or any(c.isspace() for c in current["local_model"]):
@@ -164,6 +173,8 @@ class Workspace:
         if current["codex_url"]:
             current["codex_url"] = validate_url(current["codex_url"])
         updates = {name: current[key] for key, name in FIELDS.items()}
+        if current["provider"] == "local":
+            validate_managed_settings(updates)
         api_key = data.get("api_key")
         if api_key is not None and (
             not isinstance(api_key, str)

@@ -37,19 +37,34 @@ harness changes, and log.
 
 ## Connect a model and choose work
 
-In **Setup**, enter the llama.cpp server's API base address, including `/v1`.
-**Test connection** reads the model list without generating a completion.
-Choose its exact model ID and save. Keys are write-only in the interface and
-are stored in the workspace's ignored `.env`. The local profile configures
-OpenCode and the judge together; see [LOCAL_MODELS.md](LOCAL_MODELS.md) for
-context limits and server setup. Studio does not start or download a model.
+In **Setup**, choose the local connection and its model lifetime. **Start and
+unload automatically** starts the existing **llama-server executable** with your
+**GGUF model file** when an experiment begins. Enter absolute paths to both
+files, the loopback API address including `/v1`, and the model alias. The server
+stays available for setup checks, refinement, judging, and the final report;
+Studio then stops it and releases its model resources. A failed or stopped run
+also closes its owned model server. No model weights are downloaded.
+
+Managed startup refuses an occupied endpoint. Use **External server** when you
+want to use a server already running; Studio never stops an external server.
+In external mode, **Test connection** reads the model list without generating a
+completion. In managed mode, testing and saving settings do not load the model;
+startup and readiness checks happen when a real experiment starts. Choose the
+exact model ID for an external server and save.
+
+Keys are write-only in the interface and are stored in the workspace's ignored
+`.env`. A managed server's temporary access key stays within its running job.
+The local profile configures OpenCode and the judge together; see
+[LOCAL_MODELS.md](LOCAL_MODELS.md) for the full-workflow CLI, context limits,
+and server setup.
 
 **Advanced model settings** shows the local context window and maximum output
 in tokens, defaulting to 32,768 and 4,096. Match the context window configured
-on your running server, and keep output smaller than context. These fields tell
-Harness² the budget available to OpenCode; changing them does not restart or
-resize the model server. Saved budget changes apply to new operations and are
-part of an experiment's resume identity.
+on your external server, and keep output smaller than context. These fields tell
+Harness² the budget available to OpenCode. In managed mode, the context setting
+also configures the server at its next startup. Saving settings does not start,
+restart, or resize a running server. Saved budget changes apply to new operations
+and are part of an experiment's resume identity.
 
 Studio's complete local pipeline currently supports JobBench with OpenCode.
 LAB's host executor can use a local model through the CLI, but its judge needs
@@ -72,14 +87,16 @@ retries can add work.
 **Check the plan** previews task selection without a model completion. **Start
 experiment** shows the connection and compute use before it starts. The normal
 pipeline checks setup, runs refinement, judges the adopted output, and builds
-the score report. Concurrent domains controls domain workers; the current form
+the score report, then adds a readable wrap-up before unloading an owned model.
+Concurrent domains controls domain workers; the current form
 selects one domain.
 
 ## Follow, stop, and resume
 
 Studio runs one operation at a time. Its subprocesses use the same process-tree
 containment as the CLI. **Stop run** terminates owned processes and preserves
-completed files. A server crash also terminates its contained Windows jobs;
+completed files and stops any model server owned by that operation. A server
+crash also terminates its contained Windows jobs and managed model server;
 the next launch marks the operation interrupted. Resume is available for demos
 and experiments and reuses their output directory. Restore the original model
 connection before resuming an experiment; otherwise start a new experiment.
@@ -88,6 +105,20 @@ Results appear as each task finishes. Scores only appear after judging and
 are not inferred from a completed execution. Output files can be downloaded,
 text files previewed, and changes compared with the baseline. **Open folder**
 opens the actual output directory in the system file manager.
+
+The run's readable report explains what was recorded, which files were produced,
+and how the selected result was graded. It separates partial probes and proposal
+fallbacks from the final execution. A chronological timeline preserves phase
+starts, returns, recovery attempts, and model cleanup; events without a recorded
+time are labelled accordingly. Grading without a baseline score is not presented
+as proof of an improvement.
+
+After a graded local experiment, one bounded local-model request can write a
+short wrap-up from these public facts. The interface labels a model-written
+wrap-up separately from the factual fallback. It does not display private
+thinking or raw agent transcripts. A summary failure leaves the grade and output
+files intact. The same readable report is saved as `run-summary.md`, with public
+JSON and timeline files alongside it.
 
 The file list follows each benchmark's deliverable boundary. LAB exposes its
 `output/` folder; WorkBuddy exposes the authored artifacts allowed for its

@@ -3,10 +3,10 @@
 (() => {
   const $ = (selector) => document.querySelector(selector);
   const $$ = (selector) => [...document.querySelectorAll(selector)];
-  const views = { overview: "Overview", new: "New experiment", runs: "Runs", setup: "Setup" };
+  const views = { overview: "Home", new: "New experiment", runs: "Runs", setup: "Setup" };
   const statusLabels = { starting: "Starting", running: "Running", succeeded: "Complete", failed: "Failed", partial: "Needs attention", exception: "Failed", cancelled: "Stopped", interrupted: "Interrupted", pending: "Waiting", completed: "Complete", complete: "Complete", skipped: "Skipped" };
   const kindLabels = { demo: "Free demo", benchmark: "Experiment", check: "Environment check", setup: "Benchmark setup", preview: "Experiment plan", judge: "Evaluation", report: "Report", authenticate: "Authentication" };
-  const settingsFields = { local_url: "local-url", local_model: "local-model", local_context: "local-context", local_output: "local-output", project: "project", region: "region", solver: "solver", improver: "improver", judge: "judge", codex_url: "codex-url", codex_model: "codex-model" };
+  const settingsFields = { local_url: "local-url", local_model: "local-model", local_context: "local-context", local_output: "local-output", local_runtime: "local-runtime", local_executable: "local-executable", local_weights: "local-weights", project: "project", region: "region", solver: "solver", improver: "improver", judge: "judge", codex_url: "codex-url", codex_model: "codex-model" };
   let token = "";
   let state = null;
   let view = "overview";
@@ -298,7 +298,7 @@
     if (settingsLoaded) return;
     settingsLoaded = true;
     $("#provider").value = ["local", "vertex", "custom"].includes(settings.provider) ? settings.provider : "local";
-    Object.entries(settingsFields).forEach(([key, id]) => { $(`#${id}`).value = settings[key] || ""; });
+    Object.entries(settingsFields).forEach(([key, id]) => { $(`#${id}`).value = settings[key] || (key === "local_runtime" ? "external" : ""); });
     providerChanged();
   }
   function providerChanged() {
@@ -322,8 +322,22 @@
     $("#local-token-limits").hidden = provider !== "local";
     ["local-context", "local-output"].forEach((id) => { $(`#${id}`).disabled = provider !== "local"; });
     ["solver", "improver", "judge"].forEach((id) => { $(`#${id}`).readOnly = provider === "local"; });
+    localRuntimeChanged();
     text("#test-connection", provider === "vertex" ? "Check environment" : "Test connection");
     if (provider !== "local") $("#advanced-models").open = true;
+    message("#connection-test-message", "");
+  }
+  function localRuntimeChanged() {
+    const local = $("#provider").value === "local";
+    const managed = local && $("#local-runtime").value === "managed";
+    $("#local-runtime").disabled = !local;
+    $("#local-managed-paths").hidden = !managed;
+    ["local-executable", "local-weights"].forEach((id) => {
+      $(`#${id}`).disabled = !managed;
+      $(`#${id}`).required = managed;
+    });
+    text("#local-server-help", managed ? "The server starts automatically when you begin a run. Use an unused local port; Harness² will keep this server private to the run." : "Start your local server, then test the connection to discover its models.");
+    text("#local-token-help", managed ? "These limits configure the model server for each run. Context covers the prompt, tool output, and reply; maximum output must be smaller. Larger contexts need more memory." : "Match the context window configured on the running model server. Context covers the prompt, tool output, and reply; maximum output must be smaller. These settings tell Harness² the available budget. They do not restart or resize the server.");
     message("#connection-test-message", "");
   }
   function fillLocalModels() {
@@ -364,6 +378,7 @@
     text("#workspace-name", state.workspace || "Local workspace");
     $("#workspace-name").title = state.workspace || "";
     text("#onboarding-provider", providerLabel(state.settings));
+    text("#onboarding-kicker", jobs.some((job) => ["demo", "benchmark"].includes(job.kind)) ? "NEXT STEPS" : "YOUR FIRST EXPERIMENT");
     text("#key-status", state.settings?.key_configured ? "A key is saved locally. Leave the field empty to keep it." : "No key is saved. Local models usually do not need one.");
     fillSettings(state.settings || {});
     renderBenchmarks();
@@ -431,22 +446,23 @@
   function renderDetail(job) {
     if (detailTabId !== job.id) {
       detailTabId = job.id;
-      selectTab(["demo", "benchmark", "judge"].includes(job.kind) ? "results" : "log");
+      selectTab(["demo", "benchmark", "judge", "report"].includes(job.kind) ? "overview" : "log");
     }
     $("#job-empty").hidden = true;
     $("#job-detail-content").hidden = false;
     text("#detail-title", job.title || kindLabels[job.kind] || "Run");
-    text("#detail-kind", (kindLabels[job.kind] || "Run").toUpperCase());
+    text("#detail-kind", `${(kindLabels[job.kind] || "Run").toUpperCase()}${job.imported ? " · IMPORTED HISTORY" : ""}`);
     const badge = statusBadge(job.status);
     badge.id = "detail-status";
     $("#detail-status").replaceWith(badge);
-    text("#detail-time", `${isActive(job.status) ? "Started" : "Created"} ${when(job.started_at || job.created_at)}`);
+    text("#detail-time", job.finished_at ? `Finished ${when(job.finished_at)}` : `${isActive(job.status) ? "Started" : "Created"} ${when(job.started_at || job.created_at)}`);
     $("#job-cancel").hidden = !isActive(job.status);
-    $("#job-resume").hidden = !["failed", "interrupted", "cancelled"].includes(job.status) || !["demo", "benchmark"].includes(job.kind);
+    $("#job-resume").hidden = Boolean(job.imported) || !["failed", "interrupted", "cancelled"].includes(job.status) || !["demo", "benchmark"].includes(job.kind);
     $("#job-resume").disabled = launching || Boolean(activeJob());
     $("#job-open-folder").disabled = !job.output_dir;
     $("#job-error").hidden = !job.error;
     text("#job-error", job.error || "");
+    $("#imported-run-note").hidden = !job.imported;
     const phases = Array.isArray(job.phases) ? job.phases : [];
     $("#job-phases").replaceChildren(...phases.map((phase, index) => {
       const status = String(phase.status || "pending");
@@ -468,6 +484,7 @@
       $("#task-progress-bar").max = total;
       $("#task-progress-bar").value = Math.min(done, total);
     }
+    renderStory(job);
     renderTasks(job);
     const log = $("#job-log");
     const value = job.log || (isActive(job.status) ? "Waiting for output…" : "No output was recorded for this job.");
@@ -480,6 +497,79 @@
       followingLog = follow;
       lastLogId = job.id;
     }
+  }
+  function renderStory(job) {
+    const story = job.story && typeof job.story === "object" ? job.story : {};
+    const overview = $("#job-overview");
+    const paragraphs = Array.isArray(story.overview) ? story.overview.filter((value) => typeof value === "string" && value.trim()) : [];
+    const summary = typeof story.model_summary === "string" ? story.model_summary.trim() : "";
+    const modelWritten = story.summary_status === "model";
+    const tasks = Array.isArray(job.tasks) ? job.tasks : [];
+    const selections = tasks.flatMap((task) => Array.isArray(task.selections) ? task.selections : []);
+    const graded = selections.filter((selection) => selection.graded && typeof selection.score === "number" && Number.isFinite(selection.score));
+    const files = new Set(selections.flatMap((selection) => (selection.files || []).map((file) => file.id || file.name)));
+    const facts = element("div", "report-facts");
+    function fact(value, label) { const box = element("div"); box.append(element("strong", "", value), element("span", "", label)); facts.append(box); }
+    fact(statusLabels[job.status] || human(job.status), "Run status");
+    if (graded.length === 1) {
+      const value = graded[0].score;
+      fact(value >= 0 && value <= 1 ? value.toLocaleString(undefined, { style: "percent", maximumFractionDigits: 2 }) : value.toLocaleString(undefined, { maximumFractionDigits: 2 }), "Recorded score");
+    } else if (graded.length) fact(count(graded.length), "Graded selections");
+    if (files.size) fact(count(files.size), "Output files");
+    overview.replaceChildren(facts);
+    const narrative = element("section", "run-narrative");
+    narrative.append(element("h3", "", "What happened"));
+    if (paragraphs.length) paragraphs.slice(0, 24).forEach((paragraph) => narrative.append(element("p", "", paragraph)));
+    else if (summary && !modelWritten) narrative.append(element("p", "", summary));
+    else narrative.append(element("p", "", isActive(job.status) ? "The run is in progress. Its readable report will appear as results are recorded. Timeline and Activity show the work so far." : "This earlier run has no saved narrative report. Its recorded status, output files, and activity are available here."));
+    overview.append(narrative);
+    const warnings = Array.isArray(story.warnings) ? story.warnings.filter((value) => typeof value === "string" && value.trim()) : [];
+    if (warnings.length) {
+      const note = element("section", "report-notes");
+      note.append(element("h3", "", "Keep in mind"));
+      warnings.slice(0, 20).forEach((warning) => note.append(element("p", "", warning)));
+      overview.append(note);
+    }
+    if (summary && modelWritten) {
+      const wrapup = element("section", "run-wrapup");
+      wrapup.append(element("span", "eyebrow", "IN THE MODEL’S OWN WORDS"), element("h3", "", "The model’s wrap-up"));
+      wrapup.append(element("p", "field-help", "The model’s interpretation of the saved run, alongside the recorded results above."));
+      wrapup.append(element("div", "wrapup-text", summary));
+      overview.append(wrapup);
+    } else if (story.summary_status) {
+      const source = story.summary_status === "pending" ? "This overview uses the results recorded so far. A model-written wrap-up can follow grading and reporting." : story.summary_status === "unavailable" ? "This overview uses the recorded results. A model-written wrap-up could not be produced." : "This overview uses the recorded results. No model-written wrap-up is saved for this run.";
+      overview.append(element("p", "field-help report-source", source));
+    }
+    const timeline = $("#job-timeline");
+    const events = Array.isArray(story.events) ? story.events.filter((event) => event && typeof event === "object") : [];
+    const source = events.length ? events : (job.phases || []).map((phase) => ({ time: phase.finished_at || phase.started_at, title: phase.label || human(phase.id), detail: statusLabels[phase.status] || human(phase.status || "pending"), kind: phase.status }));
+    timeline.replaceChildren();
+    if (source.length) {
+      const list = element("ol", "run-timeline");
+      source.slice(0, 150).forEach((event) => {
+        const item = element("li");
+        if (["warning", "error", "failed", "fallback", "timeout"].includes(event.kind)) item.classList.add("timeline-caution");
+        const header = element("div", "timeline-heading");
+        header.append(element("h3", "", event.title || "Recorded event"));
+        const timestamp = event.time ? when(event.time) : "";
+        const stamp = element("time", "", timestamp || "Time not recorded");
+        if (timestamp) stamp.dateTime = String(event.time);
+        header.append(stamp);
+        item.append(header);
+        if (event.detail) item.append(element("p", "", event.detail));
+        list.append(item);
+      });
+      timeline.append(list);
+    } else timeline.append(empty("No timeline recorded yet", isActive(job.status) ? "Events will appear as the work moves through its stages." : "The saved activity log may have more detail for this earlier run."));
+  }
+  function browseRuns() {
+    $("#job-filter").value = "all";
+    $("#job-search").value = "";
+    jobsSignature = "";
+    renderJobs();
+    showView("runs");
+    $(".jobs-panel").scrollIntoView({ behavior: "smooth", block: "start" });
+    $("#job-search").focus({ preventScroll: true });
   }
   function renderTasks(job) {
     const tasks = Array.isArray(job.tasks) ? job.tasks : [];
@@ -535,7 +625,7 @@
     const score = element("div", "selection-score");
     if (selection.graded && typeof selection.score === "number" && Number.isFinite(selection.score)) {
       const formatted = selection.score >= 0 && selection.score <= 1
-        ? selection.score.toLocaleString(undefined, { style: "percent", maximumFractionDigits: 1 })
+        ? selection.score.toLocaleString(undefined, { style: "percent", maximumFractionDigits: 2 })
         : selection.score.toLocaleString(undefined, { maximumFractionDigits: 4 });
       score.append(element("strong", "", formatted), element("span", "", "Graded score"));
     }
@@ -595,7 +685,7 @@
     const benchmark = state?.benchmarks?.find((item) => item.id === benchmarkId);
     const executions = ((!params.mode || params.mode === "both") ? 7 : 4) * (params.k || 1);
     $("#confirm-facts").replaceChildren(element("p", "", `${benchmark?.name || "Experiment"} · ${(params.domains || []).map(human).join(", ") || "Selected domains"}`), element("p", "", `Up to ${params.max_tasks || 1} task(s) per domain · ${params.k || 1} branch(es) · ${params.workers || 1} parallel domain(s)`), element("p", "", `${executions} planned full executions per task, plus harness editing, reflection, and judging. Saved work may reduce this; retries can add work.`), element("p", "", providerLabel()));
-    text("#confirm-compute", state?.settings?.provider === "local" ? "Your local model will use this machine’s computing resources. You can stop the run from Runs." : "This uses your connected provider and may incur charges. You can stop the run from Runs.");
+    text("#confirm-compute", state?.settings?.provider === "local" ? state?.settings?.local_runtime === "managed" ? "Your local model loads for this run and unloads after grading and reporting, failure, or stop. You can stop the run from Runs." : "Your local model will use this machine’s computing resources. You can stop the run from Runs." : "This uses your connected provider and may incur charges. You can stop the run from Runs.");
     text("#confirm-accept", resume ? "Resume run" : "Start experiment");
     dialog.returnValue = "cancel";
     return new Promise((resolve) => {
@@ -679,6 +769,8 @@
     try {
       const settings = await api("/api/settings", { method: "POST", body: settingsValues() });
       if (state) state.settings = settings;
+      $("#local-runtime").value = settings.local_runtime || "external";
+      localRuntimeChanged();
       $("#api-key").value = "";
       message("#settings-message", "Connection saved. You’re ready to plan an experiment.");
       renderPlan();
@@ -690,6 +782,10 @@
     if ($("#provider").value === "vertex") { launch("check"); return; }
     const settings = settingsValues();
     const local = settings.provider === "local";
+    if (local && settings.local_runtime === "managed") {
+      message("#connection-test-message", "The model starts automatically when you begin a run. Save this connection to validate the server and model paths; this button does not load the model.");
+      return;
+    }
     const url = local ? settings.local_url : settings.codex_url;
     const model = local ? settings.local_model : settings.codex_model;
     if (!url) { message("#connection-test-message", "Enter the server address first.", true); return; }
@@ -760,7 +856,7 @@
   }
 
   function selectTab(name, focus = false) {
-    ["results", "log"].forEach((id) => {
+    ["overview", "timeline", "results", "log"].forEach((id) => {
       const tab = $(`#tab-${id}`);
       const selected = name === id;
       tab.setAttribute("aria-selected", String(selected));
@@ -784,6 +880,7 @@
   $("#job-search").addEventListener("input", renderJobs);
   $("#job-filter").addEventListener("change", renderJobs);
   $("#provider").addEventListener("change", providerChanged);
+  $("#local-runtime").addEventListener("change", localRuntimeChanged);
   $("#local-model").addEventListener("input", fillLocalModels);
   $("#settings-form").addEventListener("submit", saveSettings);
   $("#test-connection").addEventListener("click", testConnection);
@@ -794,14 +891,17 @@
   $("#job-open-folder").addEventListener("click", () => selectedJob && openFolder(selectedJob.id));
   $("#job-cancel").addEventListener("click", cancelJob);
   $("#job-resume").addEventListener("click", resumeJob);
+  $("#detail-all-runs").addEventListener("click", browseRuns);
   $("#follow-log").addEventListener("click", () => { const log = $("#job-log"); followingLog = true; log.scrollTop = log.scrollHeight; log.focus({ preventScroll: true }); });
   $("#job-log").addEventListener("scroll", () => { const log = $("#job-log"); if (log.clientHeight) followingLog = log.scrollHeight - log.scrollTop - log.clientHeight < 65; });
-  ["results", "log"].forEach((id) => {
+  const detailTabs = ["overview", "timeline", "results", "log"];
+  detailTabs.forEach((id, index) => {
     $(`#tab-${id}`).addEventListener("click", () => selectTab(id));
     $(`#tab-${id}`).addEventListener("keydown", (event) => {
       if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
         event.preventDefault();
-        selectTab(event.key === "Home" ? "results" : event.key === "End" ? "log" : id === "results" ? "log" : "results", true);
+        const next = event.key === "Home" ? 0 : event.key === "End" ? detailTabs.length - 1 : (index + (event.key === "ArrowRight" ? 1 : -1) + detailTabs.length) % detailTabs.length;
+        selectTab(detailTabs[next], true);
       }
     });
   });

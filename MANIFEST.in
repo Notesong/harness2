@@ -8,3 +8,4 @@ include dependencies/README.md dependencies/PINNED.md dependencies/ASSETS.json
 global-exclude __pycache__ *.py[cod] *.log
 
 recursive-include assets *.png
+recursive-include tests *.py *.cjs

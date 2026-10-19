@@ -6,7 +6,93 @@ completions and structured tool calls. The local provider also reaches LAB's
 host OpenCode sessions, but that does not replace LAB's provider-specific judge
 integration. WorkBuddy's generated Vertex routes are a separate configuration.
 
-Start your server before running an experiment. The following Windows recipe
+## Start and unload automatically
+
+Use a managed runtime when Harness² should load the local model for an experiment
+and shut the server down after the work finishes. Configure existing local files
+in the workspace's ignored `.env`, or export them in your shell:
+
+```dotenv
+HARNESS2_LOCAL_RUNTIME=managed
+HARNESS2_LOCAL_EXECUTABLE=C:\tools\llama.cpp\llama-server.exe
+HARNESS2_LOCAL_WEIGHTS=E:\models\model.gguf
+HARNESS2_LOCAL_BASE_URL=http://127.0.0.1:8087/v1
+HARNESS2_LOCAL_MODEL=local-model-64k
+HARNESS2_LOCAL_CONTEXT=65536
+HARNESS2_LOCAL_OUTPUT=8192
+```
+
+The executable and GGUF paths must be absolute and point to existing files.
+Harness² reads the model in place; it does not download or move weights. The
+managed endpoint must use `http://127.0.0.1:PORT/v1`. Its port must be
+free: managed startup refuses an occupied endpoint and never stops its existing
+server. Choose **external** mode to use a server that you manage yourself.
+
+Run the full local JobBench workflow through Studio, or use:
+
+```powershell
+.\.venv\Scripts\python.exe -m harness2.cli.local_run `
+  --only-domains technical_writers --max-tasks 1 --k 1 --mode parallel --workers 1
+```
+
+The installed entry point is `harness2-local-run`. It checks setup, runs the
+adaptation sweep, judges adopted results, and writes `report.txt`. It then writes
+a readable result report with an optional model-written wrap-up. One managed
+server stays loaded through all five steps and closes after the wrap-up, a
+failed benchmark step, or Ctrl+C. Completed results remain on disk. A later
+benchmark step is not run after an earlier step fails. An unavailable wrap-up
+uses a factual fallback and does not change the recorded grade.
+
+Each invocation creates a distinct directory under `runs/local/`. Pass
+`--output <directory>` to choose a new or empty directory; an existing nonempty
+directory is refused so another experiment's evidence is preserved. The same
+benchmark, scale, modes, seed, and output directory are used across the workflow.
+`--max-tasks` applies per domain; omitting `--only-domains` includes every domain.
+Add `--dry-run` to preview task selection without starting a model or creating an
+experiment directory.
+
+The wrapper currently supports JobBench with OpenCode and requires the local
+profile for solving, improving, and judging. Explicit conflicting model or
+judge-endpoint overrides are rejected. Standalone `harness2`, `harness2-judge`,
+and `harness2-report` keep their existing lifecycle: they do not start or stop
+your model server. Use the full workflow when you want automatic cleanup across
+all stages.
+
+### Read the result and its history
+
+`run-summary.md` explains the recorded task outcomes, selected files, scores,
+proposal fallbacks, and known limitations. `run-report.json` carries the same
+public facts for Studio, while `run-timeline.jsonl` records phase events and
+`run-timeline.json` provides a readable event snapshot. A file's presence is
+reported separately from execution completion and rubric quality. When no
+baseline grade exists, the report says that the selected score does not establish
+an improvement. Original failures and later recovery remain separate events.
+
+After grading, the optional wrap-up makes one local chat-completion request,
+limited to 800 output tokens and a 180-second request timeout. Only public result
+metadata is supplied; agent transcripts, private reasoning, and document contents
+are excluded. Thinking fields and thinking blocks are not used as the wrap-up.
+There is no cloud fallback. If the local endpoint is absent, fails, or returns no
+usable final text, the deterministic report remains available.
+
+You can regenerate the factual report after the model has been unloaded:
+
+```powershell
+.\.venv\Scripts\python.exe -m harness2.cli.summarize `
+  --output runs\local\YOUR-EXPERIMENT --no-model
+```
+
+Omit `--no-model` to request a model-written wrap-up from an explicitly configured
+loopback local endpoint after grading. This standalone command does not start a
+server; the full workflow wrapper owns automatic startup and cleanup.
+
+## Use an external server
+
+`HARNESS2_LOCAL_RUNTIME=external` is the default. Start your server before running
+an experiment and stop it yourself after the final report. Harness² never shuts
+down an external server, including when the full workflow wrapper is used.
+
+The following Windows recipe
 uses the 64K, thinking-off configuration tested with llama.cpp build `b11406`
 (`8216c8462`). It passed text, structured-tool, and actual 40,045-token prompt
 checks with the tested 27B Q3 model on a 16 GB RTX 5060 Ti. That establishes
@@ -67,7 +153,8 @@ The model setting must match the server's alias. The API base URL includes
 context and the maximum completion requested by OpenCode; output must be
 smaller than context. If omitted, the generic helper defaults remain 32768 and
 4096; those defaults do not configure or discover the server's actual limits.
-Set both explicitly to match your server. With no explicit solver, improver,
+Set both explicitly to match your external server. In managed mode, the context
+setting also configures the server at its next startup. With no explicit solver, improver,
 or judge settings, this profile supplies:
 
 ```dotenv

@@ -310,6 +310,61 @@ for step in range(4):
         self.assertFalse(summary.with_suffix(".json.tmp").exists())
 
 
+class ConcurrentTerminationReviewTests(unittest.TestCase):
+    def test_owned_and_fallback_popen_cleanup_is_serial_and_idempotent(self):
+        # A cancellation request and timeout/finally cleanup must never overlap
+        # native Job handle closure. Exercise both initialized owned Popen locks
+        # and lazy initialization for ordinary caller-supplied Popen instances.
+        for owned in (True, False):
+            with self.subTest(owned=owned):
+                arguments = [sys.executable, "-c", "import time; time.sleep(30)"]
+                process = (processes.start(arguments) if owned else subprocess.Popen(
+                    arguments, **processes.popen_group_kwargs()))
+                entered, release = threading.Event(), threading.Event()
+                requests = threading.Barrier(3)
+                calls, errors = [], []
+                original = processes._terminate_tree
+
+                def delayed_cleanup(target, *, grace):
+                    calls.append(target.pid)
+                    entered.set()
+                    if not release.wait(timeout=3):
+                        raise TimeoutError("fixture release was not signalled")
+                    original(target, grace=grace)
+
+                def stop():
+                    try:
+                        requests.wait(timeout=3)
+                        processes.terminate_tree(process)
+                    except BaseException as exc:
+                        errors.append(exc)
+
+                workers = [threading.Thread(target=stop) for _ in range(2)]
+                try:
+                    with patch.object(processes, "_terminate_tree", side_effect=delayed_cleanup):
+                        for worker in workers:
+                            worker.start()
+                        requests.wait(timeout=3)
+                        self.assertTrue(entered.wait(timeout=3))
+                        time.sleep(0.05)
+                        self.assertIsNone(process.poll())
+                        self.assertEqual(calls, [process.pid])
+                        release.set()
+                        for worker in workers:
+                            worker.join(timeout=5)
+                        self.assertTrue(all(not worker.is_alive() for worker in workers))
+                        self.assertEqual(errors, [])
+                        processes.terminate_tree(process)
+                        self.assertEqual(calls, [process.pid])
+                    self.assertIsNotNone(process.poll())
+                finally:
+                    release.set()
+                    for worker in workers:
+                        if worker.ident is not None:
+                            worker.join(timeout=5)
+                    processes.terminate_tree(process)
+
+
 @unittest.skipUnless(os.name == "nt", "Windows Job Object integration")
 class WindowsProcessReviewTests(unittest.TestCase):
     def setUp(self):

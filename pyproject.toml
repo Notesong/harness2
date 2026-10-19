@@ -34,6 +34,7 @@ harness2-check = "harness2.cli.check:main"
 harness2-demo = "harness2.cli.demo:main"
 harness2-bridge = "harness2.cli.bridge:main"
 harness2-ui = "harness2.ui.server:main"
+harness2-local-run = "harness2.cli.local_run:main"
 
 [tool.setuptools]
 packages = ["harness2", "harness2.cli", "harness2.core", "harness2.benchmarks", "harness2.substrate", "harness2.ui", "harness2.third_party"]

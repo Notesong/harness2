@@ -4,8 +4,8 @@ This record separates local portability checks from validation of an installed
 benchmark or a model service. The original Windows port snapshot passed 50
 tests on Windows 11 AMD64 (`10.0.26300`) with CPython 3.12.10 and made no model
 requests. Later UI and local-provider checks are recorded separately below.
-The CI configuration also targets Ubuntu and Python 3.13; configuration alone
-does not establish that those jobs passed.
+The original CI definition also targeted Ubuntu and Python 3.13. Actual
+hosted failures and the subsequent passing matrix are recorded below.
 
 ## What the local checks establish
 
@@ -49,20 +49,49 @@ upstream CLI check. The JobBench/LAB lock checks and downloaded WorkBuddy data
 were separate scratch checks; they do not make the checkout ready for a full
 benchmark run.
 
+## Subsequent hosted CI
+
+As of 2026-10-19, [GitHub Actions run 39194138279](https://github.com/Notesong/harness2/actions/runs/39194138279)
+passed all four jobs for commit `da17aeb4753e5a7976349a3ee16d0e15bdc75934`:
+Windows and Ubuntu, each on Python 3.12 and 3.13. Each job passed the 83-test
+suite, provenance checks, Ruff, and the deterministic `k=2` demo. These hosted
+checks did not run an upstream benchmark model or Docker workload.
+
+The preceding `aabd61ec5db5eda51ac62b8f3fd4aee608c56f3b` run failed on test
+fixture assumptions: three Windows tests compared temporary-path aliases
+without resolving them, and a Linux LAB fixture placed results under `/tmp`,
+which the runner deliberately rejects. The correction canonicalized fixture
+roots and used an allowed LAB results directory; production code was unchanged.
+Matrix fail-fast was disabled so every job could report its result. The passing
+job and step summaries were independently fetched through the GitHub API and
+retained locally in `.tmp/ci-39194138279-jobs.json`.
+
+The separate review-fix worktree at
+`0cc8d8209b19727617cd1b902bffa395deea35d9` subsequently passed **129 tests in
+74.221 seconds** on the normal Windows host, with Ruff, JavaScript syntax,
+and all 48 asset checks passing. [Its hosted CI run](https://github.com/Notesong/harness2/actions/runs/39196937582)
+also passed all four Windows/Ubuntu and Python 3.12/3.13 jobs. The additional
+checks cover endpoint credential validation, attempt-status logging, native
+JobBench judge locking, atomic writes, and UI result counts. Four independent
+processes exercised the actual patched upstream judge's lock; fresh setup,
+API-only upgrade, full-patch reuse, and conflicting-source rejection were also
+checked without model calls.
+
+A fresh offline source-archive to wheel installation passed the installed
+UI/demo proof for that review snapshot, as detailed below. These fixes and
+checks were isolated from the `da17aeb` checkout executing the live model test.
+They do not retroactively change which implementation that test exercised.
+
 ## Subsequent UI validation
 
-A normal-host test-suite snapshot passed 75 tests in 37.823 seconds, including
-the browser UI backend, local-provider configuration, and original portability
-regressions. Ruff and all 47 release asset checks passed. Socket tests require
-the normal host environment here: the restricted execution environment blocks
-loopback access with Windows error 10013, so its HTTP test failures do not
-establish an application failure.
-
-A pre-commit normal-host suite passed **80 tests in 39.181 seconds**:
-50 portability tests, 11 local-provider tests, 17 UI API tests, and two startup
-tests. Ruff, all 47 release asset checks, and `git diff --check` also passed.
-After adding UI context/output controls, the suite passed **83 tests in
-40.366 seconds**, with Ruff and all 47 provenance checks passing again.
+After adding UI context/output controls, the normal-host suite passed
+**83 tests in 40.366 seconds**, with Ruff and all 47 provenance checks passing.
+This snapshot includes the original 50 portability tests, local-provider
+configuration, UI API behavior, and startup checks. Later review fixes have the
+separate 129-test checkpoint above. Socket tests require the normal host
+environment here: the restricted execution environment blocks loopback access
+with Windows error 10013, so its HTTP test failures do not establish an
+application failure.
 
 Browser checks at 1440-pixel desktop width and 390-pixel narrow width found no
 horizontal overflow. The UI read local `/models` metadata, ran the real
@@ -73,6 +102,57 @@ actual JobBench preview, cancellation of model confirmation, and UI shutdown
 were also exercised. These UI checks establish those local interactions; they
 do not establish a successful model-driven benchmark or external-provider
 access.
+
+## Later report, history and owned-model lifecycle checks
+
+The subsequent feature snapshot passed **187 Windows tests in 60.263 seconds**.
+It adds readable reports and chronological timelines, discovery of existing
+CLI runs, navigation through run history, and automatic cleanup of a local
+server owned by an operation. Native tests use real loopback Python children
+and process-tree containment; fixture tests exercise serialization, completed
+and interrupted history, factual summary fallback, and cleanup failures.
+These regressions do not rerun the model task or establish model quality.
+The final focused checks passed 13 report tests and 10 local-run tests,
+including the added summary-provenance regression. These focused checks are
+recorded separately from the earlier full-suite count.
+
+A real managed-server check on **2026-10-19 15:53:26–15:54:18 UTC** loaded the
+same 27B GGUF in 28.516 seconds, made one bounded retrospective summary
+request, and automatically stopped only its owned server process. That request
+generated 283 tokens in 18.17 seconds (15.52 tokens/second); total elapsed time
+was 51.813 seconds. It summarized saved public run facts, not a continuation of
+the original agent session. No task execution or grading was rerun, and the
+four selected documents and grade hashes were unchanged. A fresh-process check
+confirmed `summary_status=model`, creation time
+`2026-10-19T15:54:17.911705+00:00`, and the local Qwen retrospective attribution.
+The initial proof driver had retained an older formatter import and reported
+its cached fallback status; the preserved proof and later metadata distinguish
+that observer result from the model request and saved report.
+
+After owned cleanup, a host memory check found no llama server process, about
+12.1 GiB RAM used with 19.66 GiB free, and 948 MiB VRAM used. Those measurements
+establish cleanup for this local proof, not a universal memory-use guarantee.
+The retrospective narrative and its provenance are saved alongside
+`run-summary.md`, `run-report.json`, and `run-timeline.json`. The original
+experiment and score retain their earlier timestamps and limitations.
+
+## Subsequent LAB native readiness
+
+A later model-free check installed the pinned LAB checkout's 81 locked
+packages in its own Windows virtual environment, without changing its lock or
+project metadata. Document, judge-SDK, and plotting imports passed. The current
+adapter discovered 1,143 tasks across 25 practice areas and rendered its base
+harness; this is the adapter's two-level discovery scope, not the full recursive
+inventory of the upstream checkout. Synthetic PDF, PPTX, and XLSX documents
+were read through both the host parser and judge reader. An existing bundled
+Poppler binary was used without changing the machine PATH.
+
+DOCX parsing failed because Pandoc was absent. The unchanged upstream LAB
+judge rejected the configured local Qwen alias during provider detection,
+before any network request. There were zero model calls, and the saved local
+profile was unchanged. These checks establish installed dependency and selected
+reader readiness, not a completed LAB benchmark or local LAB judging. Local
+records are in `.tmp/lab-readiness/prepare.json` and `readiness.json`.
 
 ## First local model experiment: manually stopped after preserved compaction
 
@@ -136,7 +216,7 @@ metadata are retained under the ignored `runs/local-model-smoke/` directory;
 actual run state is under `runs/jb/`. `manual-stop.json` records the operator
 cutoff and `first-profile-sanitized.json` records its configuration without keys.
 
-## Separate 64K engineering smoke test: in progress
+## Separate 64K engineering smoke test: completed with recovery
 
 This is an engineering and capacity smoke test, not a pristine controlled
 repeat. The first attempt's task-specific forensic report was committed and
@@ -149,8 +229,12 @@ the outcome cannot isolate the causal effect of any one setting.
 
 The same GGUF weights were loaded under the new alias `qwen3.8-local-64k`,
 with context 65,536, output allowance 8192, one slot, `q8_0` K/V caches, and
-server-wide `--reasoning off`. Text and structured-tool checks passed without
-request-level thinking overrides. An actual 40,045-token prompt returned
+server-wide `--reasoning off`. In the pinned llama.cpp implementation, that
+flag sets both reasoning control and the template's `enable_thinking=false`
+default ([source](https://github.com/ggml-org/llama.cpp/blob/8216c84623cf5b22b29319344ca5e685003892f5/common/arg.cpp#L3588)).
+Zero reported reasoning counters do not guarantee that ordinary response text
+contains no reasoning-like prefix. Exact HTTP request bodies were not captured.
+Text and structured-tool checks passed without request-level thinking overrides. An actual 40,045-token prompt returned
 `READY` in 109.17 seconds without truncation; prompt throughput was 367.77
 tokens/second. The short tool response generated 36 tokens at 16.17
 tokens/second. GPU memory free after these checks was approximately 1497 MiB
@@ -164,30 +248,121 @@ rubric changes, weight changes, cloud fallbacks, or executor timeout extensions:
 the original 2400-second limit per executor attempt and two-attempt policy
 remain (the outer rollout deadline is twice that limit plus 600 seconds). The new run root
 is `runs/local-model-64k/`, with server identity, probe responses, original task
-hashes, per-stage logs, and timestamps under `evidence/`. This snapshot still
-has no completed baseline, adaptation, judge, report, or benchmark score.
+hashes, per-stage logs, and timestamps under `evidence/`.
+
+The baseline then completed naturally at **03:35:11 UTC**, approximately
+32 minutes 46 seconds after its executor started. All four required Markdown
+files were preserved, totaling 52,729 bytes. Its last assistant finish was
+`stop`, with no error; the session recorded zero compaction messages, zero
+`length` finishes, and zero reasoning parts. Two adaptation sessions began
+next. This establishes a completed baseline rollout; the baseline was not
+graded, so it provides no scored comparison with the selected result.
+
+One adaptation session then crossed OpenCode's proactive compaction threshold:
+its preceding turn used 58,021 tokens against a 57,344-token usable budget.
+The summary completed naturally at **04:05:32 UTC**, with 52,771 input tokens,
+3,318 output tokens, a `stop` finish, zero reported reasoning tokens, and no
+server truncation. OpenCode accepted the 13,615-character exposed summary and
+created a continuation. Read-only boundary and continuation snapshots were
+preserved locally. Later adaptation compactions and their continuations were
+also captured without changing the model, source, profile, or timeouts.
+Read-only SQLite observations had short bounded handles; brief interference
+with Windows temporary-directory cleanup cannot be ruled out merely because
+the handles were read-only. The capture record notes this limitation.
+
+The domain proposal was accepted on its second transport attempt and changed
+`LongTermMEMORY.md` and `guardrails.md`. The independent proposal exhausted its
+two 3600-second attempts and explicitly fell back to the inherited harness.
+Both probe executions collected one of the four required Markdown documents at
+their 2400-second boundary. Neither probe stream contains a natural final stop;
+one ended its last completed generation with `length` at 8192 output tokens.
+The frozen runner preserved nonempty partial output before checking whether it
+should log a timeout, so these partial probes were delivered to composition.
+Their exact per-attempt exit codes were not persisted. The timing and stream
+state support timeout with partial-output preservation; wrapper exit zero does
+not establish completed probe work.
+
+Composition was accepted, and the final executor completed naturally at
+**07:14:33 UTC**, after approximately 33 minutes. Its persisted stream ends with
+`stop`, and all four required Markdown files were preserved, totaling **42,582
+bytes**. Reflection returned an accepted result. With `k=1`, the final output
+was selected directly; there was no blind model-selector call. The sweep ended
+at **07:45:50 UTC** with exit zero, one task delivered, and the proposal fallback
+still recorded. This is a completed workflow with a failed adaptation branch
+and partial probes, rather than evidence that every stage succeeded.
+
+The original output reader fell back to raw Markdown because the actual
+upstream extractor and judge imported POSIX `fcntl` unconditionally. The
+original automatic judge failed before a model request with
+`ModuleNotFoundError: No module named 'fcntl'`, leaving the selection explicitly
+ungraded; its report still ran and exited zero. The earlier readiness check
+had not imported that judge module.
+
+Only after the original sweep and driver ended, a previously reviewed guard
+preserved the original failure and applied the validated native-only upstream
+file-lock repair. It verified the original task/rubric, implementation,
+selected output and effective model-profile fingerprints, as well as the owned
+server identity. The recovered judge and report both exited zero, finishing at
+**08:02:42 UTC**. Output and profile fingerprints were unchanged by recovery.
+The wrapper implementation used during model execution remained the frozen
+`da17aeb` snapshot; later repository fixes were integrated separately.
+
+The actual upstream judge processed the unchanged ten original rubrics using
+**the same local Qwen model**. The selected result scored **38/66 weighted
+points (57.58%)**, with **37/40 criteria passed** and `all_pass=false`. All ten
+rubric result entries were present without a nonempty structured error field.
+There is no baseline grade and therefore no measured improvement over the
+baseline. This single-task self-judged result is not an independent assessment
+or a benchmark-wide score. Logs, original failure, guarded recovery, grade,
+selected-file hashes and stage metadata remain under the ignored
+`runs/local-model-64k/evidence/` directory; actual benchmark results are under
+its `jb/` directory.
 
 ## Packaging and license checks
 
-The wheel and source archive contained all 49 intended files under
-`third_party/`, byte for byte. These consist of runner source, harness text and
+The review snapshot's wheel and source archive contained all **50** intended
+files under `third_party/`, byte for byte, including the separately shipped
+native JobBench judge patch. These consist of runner source, harness text and
 configuration, Dockerfiles, compatibility patches, license copies, and
-provenance documents. Downloaded dependencies, `node_modules`, virtual
-environments, runs, credentials, logs, and Python bytecode were not included in
-the wheel. The source archive includes `dependencies/ASSETS.json` and
-`scripts/check_provenance.py` so its bundled assets can be verified.
+provenance documents. All 48 asset digests passed. Downloaded dependencies,
+`node_modules`, virtual environments, runs, credentials, logs, and Python
+bytecode were not included in the wheel. The source archive includes
+`dependencies/ASSETS.json` and `scripts/check_provenance.py` so its bundled
+assets can be verified.
 
-A later clean wheel/UI runtime proof used wheel SHA-256
-`67a4d7bd20847b94049a83c1380e379557271644e54b5e9ef2b80234c2948eb7`
-(373,917 bytes). A new venv installed it offline and an isolated interpreter
-ran from a separate workspace outside the checkout. The installed UI completed
-the two-task, both-mode `k=2` deterministic demo, previewed `Total: 85.15`,
-resumed with zero executions and zero editor calls, and shut down with exit
-code zero. Installed Python and UI assets matched the source snapshot; the
-source `.env` and process model settings were unchanged by that proof. Its
-source archive was provisional pending the later forensics documentation
-freeze; a documentation-only change does not retroactively alter that runtime
-snapshot.
+A fresh venv installed the review wheel offline and an isolated interpreter ran
+from a separate workspace outside the checkout. All 48 Python files, three UI
+assets, and eight licenses matched the source snapshot. The installed UI
+completed the two-task, both-mode `k=2` deterministic demo, previewed
+`Total: 85.15`, resumed with zero executions and zero editor calls, and shut
+down with exit code zero. No optional extras, build tools, development
+`PYTHONPATH`, model variables, or preexisting workspace `.env` were available
+to that installed runtime. The active experiment's `.env`, upstream judge, and
+Harness Python source bytes and modification times were unchanged by the
+proof. It made zero model calls. The local report is
+`.tmp/installed-ui-proof-caa2e7ea6449/report.json` in the review worktree; its
+source archive predates this completed-outcome documentation.
+
+After the report/history/owned-server additions, another frozen source snapshot
+was built into a source archive and wheel entirely offline, then installed
+without dependencies in a newly created venv. Its **53 Python files, three UI
+assets, 50 third-party files and eight license texts** matched the captured
+source bytes, and all 48 asset checks passed. An isolated interpreter imported
+the new local-server, report, history and summary modules from installed
+`site-packages`; the new `harness2-local-run` console entry point returned help
+successfully. Only Harness² and pip were installed in that runtime.
+
+From a separate workspace with no development `PYTHONPATH`, model variables or
+local `.env`, the installed both-mode `k=2` demo completed two tasks with **28
+executions, 31 scripted editor calls and zero failed tasks**; resume performed
+zero executions and zero editor calls. The proof's initial assertion had
+assumed the older run's 32 editor calls. That assertion failure is preserved;
+the reported counts are the new run's actual counters. There were zero model
+calls and no benchmark rerun. The source snapshot includes recorded hashes for
+uncommitted feature files on top of `0cc8d82`; it is not represented as the old
+commit alone. The proof is `.tmp/final-wheel-proof-20261019/report.json`.
+A final documentation-only source-archive refresh follows the frozen runtime
+proof; it does not change the tested installed code.
 
 The distribution metadata records
 `Apache-2.0 AND MIT AND LicenseRef-WorkBuddy-Bench` and includes eight license

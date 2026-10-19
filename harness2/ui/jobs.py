@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .. import config, processes
+from ..local_server import ManagedLocalServer
 from .workspace import BENCHMARKS, Workspace
 
 ACTIVE = {"running", "starting"}
@@ -87,6 +88,12 @@ class JobManager:
                 )
                 self._write(record)
             self.jobs[record["id"]] = record
+        from .history import discover_history
+
+        known_outputs = {record.get("output_dir") for record in self.jobs.values()}
+        for record in discover_history(workspace):
+            if record["output_dir"] not in known_outputs:
+                self.jobs.setdefault(record["id"], record)
 
     def _write(self, record: dict):
         target = self.directory / f"{record['id']}.json"
@@ -95,6 +102,15 @@ class JobManager:
             json.dumps(record, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
         )
         os.replace(temporary, target)
+
+    def _event(self, record: dict, title: str, detail: str = "", *, kind="observed"):
+        if not record.get("output_dir"):
+            return
+        path = Path(record["output_dir"]) / "run-timeline.jsonl"
+        with path.open("a", encoding="utf-8", newline="\n") as stream:
+            stream.write(json.dumps({
+                "time": now(), "title": title, "detail": detail, "kind": kind,
+            }, ensure_ascii=False) + "\n")
 
     def list(self) -> list[dict]:
         with self.lock:
@@ -212,16 +228,22 @@ class JobManager:
                 )
             ]
         run = phase("refine", "Run and refine harnesses", "harness2.cli.run_sweep", args)
-        return (
-            [
+        if params["pipeline"]:
+            phases = [
                 phase("check", "Check benchmark setup", "harness2.cli.check", cell),
                 run,
                 phase("judge", "Judge adopted results", "harness2.cli.judge", identity),
                 phase("report", "Build score report", "harness2.cli.report", identity),
             ]
-            if params["pipeline"]
-            else [run]
-        )
+            if self.workspace.settings()["provider"] == "local":
+                summary = phase(
+                    "summary", "Write a readable wrap-up", "harness2.cli.summarize",
+                    ["--output", output],
+                )
+                summary["timeout"] = 300
+                phases.append(summary)
+            return phases
+        return [run]
 
     def start(
         self, kind: str, data: dict, *, confirmed: bool = False, resume_id: str | None = None
@@ -237,6 +259,8 @@ class JobManager:
                 raise BusyError("Another operation is running. Let it finish or stop it first.")
             if resume_id:
                 prior = self.jobs.get(resume_id)
+                if prior and prior.get("imported"):
+                    raise ValueError("Imported runs are available for viewing; start a new experiment to run again.")
                 if (
                     not prior
                     or prior["kind"] not in ("demo", "benchmark")
@@ -256,6 +280,8 @@ class JobManager:
                 output = None
             if kind in ("judge", "report"):
                 source = self.jobs.get(source_id)
+                if source and source.get("imported"):
+                    raise ValueError("Imported runs are read-only. Their saved report is available in the run overview.")
                 if not source or source["kind"] != "benchmark" or not source.get("output_dir"):
                     raise ValueError("Choose the experiment to judge or report.")
                 params, output = source["params"], Path(source["output_dir"])
@@ -372,28 +398,64 @@ class JobManager:
 
     def _execute(self, identifier: str):
         record = self.jobs[identifier]
-        env = self.workspace.environment()
-        if record["output_dir"]:
-            env["HARNESS2_RUNS_DIR"] = record["output_dir"]
-        secret_values = self.workspace.secrets()
+        secret_values = []
 
         def redact(text):
             for secret in secret_values:
                 text = text.replace(secret, "[redacted]")
             return text
 
-        record.update(status="running", started_at=now())
         exit_code = 0
+        model_server = None
         log_path = self.directory / f"{identifier}.log"
         try:
+            env = self.workspace.environment()
+            if record["output_dir"]:
+                env["HARNESS2_RUNS_DIR"] = record["output_dir"]
+            secret_values = self.workspace.secrets()
+            record.update(status="running", started_at=now())
             with log_path.open("a", encoding="utf-8", newline="\n") as log:
+                if (
+                    record.get("kind") in ("benchmark", "judge", "check")
+                    and self.workspace.settings()["provider"] == "local"
+                    and env.get("HARNESS2_LOCAL_RUNTIME", "external") == "managed"
+                    and identifier not in self.cancelled
+                ):
+                    with self.lock:
+                        record["phase"] = "Loading local model"
+                        record["local_server"] = {"status": "loading"}
+                        self._write(record)
+                    self._event(record, "Loading the local model")
+                    log.write("\n── Loading local model ──\n")
+                    log.flush()
+                    model_server = ManagedLocalServer(
+                        env,
+                        root=self.workspace.root,
+                        log_path=self.directory / f"{identifier}-model.log",
+                        cancelled=lambda: identifier in self.cancelled,
+                    )
+                    model_server.start()
+                    env = model_server.environment
+                    runtime_key = env.get("HARNESS2_LOCAL_API_KEY")
+                    if runtime_key:
+                        secret_values.append(runtime_key)
+                    with self.lock:
+                        record["local_server"] = {
+                            "status": "running", "pid": model_server.pid
+                        }
+                        self._write(record)
+                    log.write("Local model ready; it will unload after this operation.\n")
+                    log.flush()
+                    self._event(record, "Local model ready")
                 for index, phase in enumerate(record["phases"]):
                     with self.lock:
                         if identifier in self.cancelled:
                             break
                         record.update(phase=phase["label"], phase_index=index)
                         phase["status"] = "running"
+                        phase["started_at"] = now()
                         self._write(record)
+                    self._event(record, phase["label"], "Starting this stage.")
                     log.write(f"\n── {phase['label']} ──\n")
                     log.flush()
                     proc = processes.start(
@@ -407,21 +469,60 @@ class JobManager:
                         encoding="utf-8",
                         errors="replace",
                     )
-                    with self.lock:
-                        self.procs[identifier] = proc
-                        stopping = identifier in self.cancelled
-                    if stopping:
-                        processes.terminate_tree(proc)
+                    deadline_timer = None
+                    phase_timed_out = threading.Event()
                     try:
+                        with self.lock:
+                            self.procs[identifier] = proc
+                            stopping = identifier in self.cancelled
+                        if stopping:
+                            processes.terminate_tree(proc)
+                        if phase.get("timeout"):
+                            def timed_out(target=proc, timeout_event=phase_timed_out):
+                                timeout_event.set()
+                                processes.terminate_tree(target)
+
+                            deadline_timer = threading.Timer(phase["timeout"], timed_out)
+                            deadline_timer.daemon = True
+                            deadline_timer.start()
                         for line in proc.stdout:
                             log.write(redact(line))
                             log.flush()
+                            for match in re.finditer(
+                                r"=== harness eval(?P<done> done)?: (?:LABEL=)?(?P<label>[\w/.-]+)",
+                                line,
+                            ):
+                                suffix = match["label"].rsplit("__", 1)[-1]
+                                if re.fullmatch(r"(?:base|dom|inv|agg)\d+", suffix):
+                                    name = {"base": "Baseline", "dom": "Domain-specific probe",
+                                            "inv": "General-method probe", "agg": "Final combined run"}[
+                                                re.sub(r"\d+$", "", suffix)]
+                                    self._event(
+                                        record,
+                                        name + (" returned" if match["done"] else " started"),
+                                        "This records an executor stage, which may retain partial output."
+                                        if match["done"] else "Solving the task under this harness.",
+                                    )
                         exit_code = proc.wait()
                     finally:
-                        processes.terminate_tree(proc)
-                        proc.stdout.close()
-                        with self.lock:
-                            self.procs.pop(identifier, None)
+                        try:
+                            if deadline_timer is not None:
+                                deadline_timer.cancel()
+                                if deadline_timer.ident is not None:
+                                    deadline_timer.join(timeout=5)
+                        finally:
+                            try:
+                                processes.terminate_tree(proc)
+                            finally:
+                                proc.stdout.close()
+                                with self.lock:
+                                    self.procs.pop(identifier, None)
+                    if phase_timed_out.is_set():
+                        exit_code = exit_code or 124
+                    self._event(
+                        record, phase["label"] + (" finished" if exit_code == 0 else " stopped"),
+                        f"Exit code: {exit_code}.", kind="result",
+                    )
                     with self.lock:
                         phase["status"] = (
                             "cancelled"
@@ -430,6 +531,7 @@ class JobManager:
                             if exit_code == 0
                             else "failed"
                         )
+                        phase["finished_at"] = now()
                         self._write(record)
                     if exit_code:
                         break
@@ -439,6 +541,32 @@ class JobManager:
             with log_path.open("a", encoding="utf-8") as log:
                 log.write("\n" + record["error"] + "\n")
         finally:
+            if model_server is not None:
+                with self.lock:
+                    record["phase"] = "Unloading local model"
+                    record["local_server"]["status"] = "unloading"
+                try:
+                    model_server.close()
+                except Exception as exc:
+                    exit_code = exit_code or 1
+                    record["error"] = redact(f"Could not unload the local model: {exc}")
+                    record["local_server"]["status"] = "unload_failed"
+                else:
+                    record["local_server"]["status"] = "unloaded"
+                    try:
+                        self._event(record, "Local model unloaded", "Its owned server has stopped.", kind="result")
+                    except OSError:
+                        pass
+                try:
+                    with log_path.open("a", encoding="utf-8") as log:
+                        log.write(
+                            "\nLocal model unloaded.\n"
+                            if record["local_server"]["status"] == "unloaded"
+                            else "\n" + record["error"] + "\n"
+                        )
+                except OSError:
+                    exit_code = exit_code or 1
+                    record["error"] = record["error"] or "Could not save the operation log."
             with self.lock:
                 cancelled = identifier in self.cancelled
                 status = "cancelled" if cancelled else "succeeded" if exit_code == 0 else "failed"
@@ -468,8 +596,10 @@ class JobManager:
                     }
                 except OSError:
                     pass
-                self._write(record)
-                self.active_id = None
+                try:
+                    self._write(record)
+                finally:
+                    self.active_id = None
 
     def get(self, identifier: str) -> dict:
         with self.lock:
@@ -490,6 +620,17 @@ class JobManager:
         done = sum(task["status"] == "ok" for task in record["tasks"])
         failed = sum(task["status"] not in ("ok", "running") for task in record["tasks"])
         record["progress"] = {"done": done, "failed": failed, "total": record["total_tasks"]}
+        if record.get("output_dir") and record.get("kind") == "benchmark":
+            from ..run_story import build_story
+
+            try:
+                record["story"] = build_story(Path(record["output_dir"]), record)
+            except (OSError, ValueError):
+                record["story"] = {
+                    "overview": [], "events": [], "model_summary": "",
+                    "summary_status": "unavailable",
+                    "warnings": ["The readable report could not be loaded. Saved outputs remain available."],
+                }
         return record
 
     def results(self, record: dict) -> tuple[list[dict], dict[str, Path]]:
