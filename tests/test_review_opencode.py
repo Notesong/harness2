@@ -143,6 +143,48 @@ class OpenCodeCleanupReviewTests(unittest.TestCase):
         self.assertIn("fixture final cleanup blocked", log)
         processes.remove_tree(self.workspace)
 
+    def partial_attempt_log(self, code):
+        def attempt(*args):
+            (self.workspace / "output/partial.txt").write_text("partial", encoding="utf-8")
+            return code
+
+        with patch.object(runner, "_attempt", side_effect=attempt) as invoke:
+            self.assertTrue(runner.run_one(self.cfg, "finance/task1"))
+        invoke.assert_called_once()
+        self.assertEqual((self.task.parent / "model_output/review/partial.txt").read_text(
+            encoding="utf-8"), "partial")
+        return next(self.logs.glob("*.log")).read_text(encoding="utf-8")
+
+    def test_timeout_with_partial_output_is_delivered_once_and_logged_honestly(self):
+        log = self.partial_attempt_log(124)
+        self.assertIn("exit=124 output=present", log)
+        self.assertIn("TIMEOUT finance/task1 attempt 1", log)
+
+    def test_killed_attempt_with_partial_output_keeps_timeout_marker(self):
+        log = self.partial_attempt_log(137)
+        self.assertIn("exit=137 output=present", log)
+        self.assertIn("TIMEOUT finance/task1 attempt 1", log)
+
+    def test_nonzero_attempt_with_partial_output_records_exit_without_timeout(self):
+        log = self.partial_attempt_log(2)
+        self.assertIn("exit=2 output=present", log)
+        self.assertNotIn("TIMEOUT", log)
+
+    def test_timeout_without_output_retries_and_records_both_attempts(self):
+        def attempt(*args):
+            if args[-1] == 1:
+                return 124
+            (self.workspace / "output/result.txt").write_text("delivered", encoding="utf-8")
+            return 0
+
+        with patch.object(runner, "_attempt", side_effect=attempt) as invoke:
+            self.assertTrue(runner.run_one(self.cfg, "finance/task1"))
+        self.assertEqual(invoke.call_count, 2)
+        log = next(self.logs.glob("*.log")).read_text(encoding="utf-8")
+        self.assertIn("attempt 1: exit=124 output=absent", log)
+        self.assertIn("TIMEOUT finance/task1 attempt 1", log)
+        self.assertIn("attempt 2: exit=0 output=present", log)
+
     def test_success_cleans_read_only_agent_files_after_delivering_output(self):
         def attempt(*args):
             self.read_only(self.workspace / "task_folder/agent-state.txt")

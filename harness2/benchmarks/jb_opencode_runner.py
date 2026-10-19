@@ -248,10 +248,13 @@ def run_one(cfg: Settings, task_id: str) -> bool:
         traj_file = traj_dir / f"{task_name}_{cfg.label}_attempt{attempt}_{_stamp()}.jsonl"
         _log(log_file, f"[{_hms()}] run {task_id} ({cfg.label}) attempt {attempt} -> {traj_file}")
         code = _attempt(cfg, workspace, traj_file, log_file, task_name, attempt)
-        if _nonempty(output_dir):
-            break
+        has_output = _nonempty(output_dir)
+        _log(log_file, f"[{_hms()}] finished {task_id} attempt {attempt}: "
+             f"exit={code} output={'present' if has_output else 'absent'}")
         if code in (124, 137):
             _log(log_file, f"[{_hms()}] TIMEOUT {task_id} attempt {attempt}")
+        if has_output:
+            break
 
     delivered = _nonempty(output_dir)
     if delivered:
