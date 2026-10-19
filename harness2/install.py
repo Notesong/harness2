@@ -36,6 +36,7 @@ from .local_models import validate_api_base_url
 PATCHES = {
     "opencode": "opencode-compat.diff",
     "job-bench-eval": "job-bench-eval-judge.diff",
+    "job-bench-eval-native-lock": "job-bench-eval-native-lock.diff",
     "harvey-labs": "harvey-labs-judge-vertex-anthropic.diff",
     "workbuddy-bench": "workbuddy-bench-runtime.diff",
 }
@@ -117,6 +118,13 @@ def clone(name: str, *, dry_run=False):
     run(["git", "-C", repo, "checkout", "--detach", "FETCH_HEAD"], dry_run=dry_run)
 
 
+def patch_keys(name: str) -> tuple[str, ...]:
+    """Ordered independent overlays, preserving upgrades from an older patch set."""
+    if name == "job-bench-eval":
+        return (name, "job-bench-eval-native-lock")
+    return (name,)
+
+
 @contextmanager
 def patch_source(name: str):
     """Present an LF patch even when this source tree was checked out with CRLF."""
@@ -133,23 +141,24 @@ def patch_source(name: str):
 
 def patch(name: str, *, dry_run=False):
     repo = config.DEPENDENCIES / name
-    source = config.THIRD_PARTY / "patches" / PATCHES[name]
-    if dry_run:
-        run(["git", "-C", repo, "apply", "--check", source], dry_run=True)
-        run(["git", "-C", repo, "apply", source], dry_run=True)
-        return
-    with patch_source(name) as source:
-        base = ["git", "-C", repo, "apply", "--ignore-space-change"]
-        if (
-            subprocess.run(
-                config.command([*base, "--reverse", "--check", source]),
-                capture_output=True,
-            ).returncode
-            == 0
-        ):
-            return
-        run([*base, "--check", source])
-        run([*base, source])
+    for key in patch_keys(name):
+        if dry_run:
+            source = config.THIRD_PARTY / "patches" / PATCHES[key]
+            run(["git", "-C", repo, "apply", "--check", source], dry_run=True)
+            run(["git", "-C", repo, "apply", source], dry_run=True)
+            continue
+        with patch_source(key) as source:
+            base = ["git", "-C", repo, "apply", "--ignore-space-change"]
+            if (
+                subprocess.run(
+                    config.command([*base, "--reverse", "--check", source]),
+                    capture_output=True,
+                ).returncode
+                == 0
+            ):
+                continue
+            run([*base, "--check", source])
+            run([*base, source])
 
 
 def overlays(name: str, *, dry_run=False):

@@ -76,6 +76,15 @@ partial output before its deadline. Every completed attempt now records its
 actual exit code and output presence, including those timeouts. The upstream
 policy of delivering partial output without retrying remains unchanged.
 
+The actual JobBench judge also imported Unix-only `fcntl` at module load time.
+Its separately shipped native lock patch preserves POSIX locking and uses a
+Windows byte-range lock with explicit polling. Setup checks and applies the API
+and native patches independently, so existing API-only installations upgrade
+without resetting their source. Readiness imports the actual judge module.
+Integration tests use the patched upstream judge to exercise concurrent writes,
+exception release, owner death, and contention lasting longer than ten seconds;
+CI stages the pinned judge on each supported Windows and Ubuntu Python version.
+
 Regression checks cover rejected credentials before metadata or settings writes,
 actual log filtering, deep read-only scratch files, failed staging and retry
 cleanup, final cleanup warnings, and preservation of partial output on errors.

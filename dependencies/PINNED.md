@@ -17,7 +17,12 @@ checkout at another revision.
   the upstream lock and adds Opus 4.8 adaptive-thinking support to the pinned
   provider adapter.
 - `job-bench-eval-judge.diff`: passes reasoning effort, raises the judge output
-  cap, and rejects empty completions.
+  cap, and rejects empty completions. This original API patch remains unchanged.
+- `job-bench-eval-native-lock.diff`: applies after the API patch and adds
+  self-contained stdlib Windows byte locking alongside POSIX `flock`. It preserves
+  grading, rubric, parsing, and extraction behavior. Setup applies and verifies both
+  patches independently, so fresh, API-only, and fully patched checkouts upgrade
+  idempotently without resetting files.
 - `harvey-labs-judge-vertex-anthropic.diff`: adds Claude and Gemini Vertex judges
   using ADC and improves malformed/ambiguous response handling.
 - `workbuddy-bench-runtime.diff`: registers the release's executor adapters,

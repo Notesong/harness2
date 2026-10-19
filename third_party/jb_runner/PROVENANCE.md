@@ -27,3 +27,15 @@ code, not a vendored asset, so it is not listed in `ASSETS.json`.
 
 [ASSETS.json](../../../dependencies/ASSETS.json) records the shipped file checksums.
 Verify them with `python scripts/check_provenance.py`.
+
+The unchanged `job-bench-eval-judge.diff` API patch and the separate
+`job-bench-eval-native-lock.diff` apply in that order to the pinned upstream
+`eval/judge.py`. Setup and preflight check each independently, preserving upgrades
+from an existing API-only installation. The native patch replaces the unconditional POSIX `fcntl`
+import with conditional stdlib `msvcrt`/`fcntl` locking. Windows waits on byte zero
+until ownership is available; exception exit and process death release ownership.
+The lock file stays in place so sibling processes share the same lock identity.
+This locking addition leaves rubric, grading, parsing, and extraction functions
+unchanged. The patched upstream file carries a prominent modification notice;
+its Apache 2.0 license remains unchanged. Native integration tests use the actual
+patched judge, and skip explicitly when its dependency checkout is unavailable.

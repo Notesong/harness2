@@ -21,7 +21,7 @@ import shutil
 import subprocess
 
 from . import config
-from .install import missing_runners, patch_source, require_linux_docker
+from .install import missing_runners, patch_keys, patch_source, require_linux_docker
 from .substrate.opencode import OpencodeSubstrate
 
 
@@ -77,20 +77,21 @@ def check(adapter, *, judge=False) -> list[str]:
                 errors.append(f"{dependency}: checkout differs from the supported pin")
         except (OSError, subprocess.CalledProcessError):
             errors.append(f"{dependency}: cannot read checkout revision")
-        with patch_source(dependency) as patch:
-            probe(
-                f"{dependency} patch",
-                [
-                    "git",
-                    "-C",
-                    target,
-                    "apply",
-                    "--ignore-space-change",
-                    "--reverse",
-                    "--check",
-                    patch,
-                ],
-            )
+        for key in patch_keys(dependency):
+            with patch_source(key) as patch:
+                probe(
+                    f"{key} patch",
+                    [
+                        "git",
+                        "-C",
+                        target,
+                        "apply",
+                        "--ignore-space-change",
+                        "--reverse",
+                        "--check",
+                        patch,
+                    ],
+                )
     if not (config.OPENCODE_DIR / "node_modules").is_dir():
         errors.append(f"OpenCode dependencies missing; run harness2-setup {bench}")
 
@@ -116,8 +117,11 @@ def check(adapter, *, judge=False) -> list[str]:
             [
                 config.JB_JUDGE_PYTHON,
                 "-c",
-                "import pandas, openpyxl, docx, mammoth, pdfplumber, pptx, openai",
+                "import pandas, openpyxl, docx, mammoth, pdfplumber, pptx, openai; "
+                "import runpy; "
+                "runpy.run_path('eval/judge.py', run_name='_harness2_judge_preflight')",
             ],
+            cwd=repo,
         )
         if not config.JB_JUDGE_API_BASE:
             errors.append(

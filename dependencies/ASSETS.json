@@ -1,6 +1,6 @@
 {
   "third_party/jb_runner/LICENSE": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
-  "third_party/jb_runner/PROVENANCE.md": "f45fb735cf8fd19902f26a4e33cda6a9e598815bb1ff6cab87bb2016b776b545",
+  "third_party/jb_runner/PROVENANCE.md": "296b2f4f3eaa511f13ae0cb28309f4318623e35f25dee00b8793a14a333fbacc",
   "third_party/jb_runner/codex_base_harness/AGENTS.md": "b5df5264478dfce7d6af52f8443a1797b17967d1bc4a8c4f8c5fe43933516a89",
   "third_party/jb_runner/harness_baseline_oc/LongTermMEMORY.md": "c78b55245ef1433c017bc3f6f796094e16c640b98543836f6d930972243d28d2",
   "third_party/jb_runner/harness_baseline_oc/guardrails.md": "ebd0b0f287bcc9bea5efa063d632677b3c0fdf014c7b67bec088c11253605a53",
@@ -29,6 +29,7 @@
   "third_party/licenses/workbuddy-bench.LICENSE": "b466fc7a63acc5cac4275fc4b0f1e22f332ad188ea600b217076ea3a8e040956",
   "third_party/patches/harvey-labs-judge-vertex-anthropic.diff": "7fc4385025916054be504b98f063e2a161515b8b4dc3bcc5cd6f4272b707ed6d",
   "third_party/patches/job-bench-eval-judge.diff": "b5878bce91f6322c9fd1fa777b3a5dd3866922f704173a658d007c62456c5728",
+  "third_party/patches/job-bench-eval-native-lock.diff": "0780b053df5192b7ac58ca80b1385c52459ba9ecfaebfe32579da723ce2dc668",
   "third_party/patches/opencode-compat.diff": "c9a8a0e826d48f3fcfc7d818321d128c28e1f7f7c594954c19453dfca4946dc8",
   "third_party/patches/workbuddy-bench-runtime.diff": "1b0fb30a89b4bcafbd15ef7d8472d6ddf36a2ed327f16bf7c4e09db77b62873f",
   "third_party/wb_runner/LICENSE": "b466fc7a63acc5cac4275fc4b0f1e22f332ad188ea600b217076ea3a8e040956",
