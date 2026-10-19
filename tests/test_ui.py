@@ -206,6 +206,77 @@ class UITests(unittest.TestCase):
             self.assertEqual(status, 400)
             self.assertEqual((self.root / ".env").read_bytes(), before)
 
+    def test_local_token_limits_have_defaults_and_round_trip_through_api(self):
+        with patch.dict(os.environ, {"HARNESS2_LOCAL_CONTEXT": "", "HARNESS2_LOCAL_OUTPUT": ""}):
+            status, state, _ = self.request("GET", "/api/state")
+            self.assertEqual(status, 200)
+            self.assertEqual(state["settings"]["local_context"], "32768")
+            self.assertEqual(state["settings"]["local_output"], "4096")
+            status, saved, _ = self.request("POST", "/api/settings", {
+                "provider": "local", "local_context": 65536, "local_output": 8192})
+            self.assertEqual(status, 200, saved)
+            self.assertEqual(saved["local_context"], "65536")
+            self.assertEqual(saved["local_output"], "8192")
+            status, saved, _ = self.request("POST", "/api/settings", {
+                "local_context": " 065536 ", "local_output": "008192"})
+            self.assertEqual(status, 200, saved)
+            self.assertEqual(saved["local_context"], "65536")
+            self.assertEqual(saved["local_output"], "8192")
+            status, state, _ = self.request("GET", "/api/state")
+            self.assertEqual(status, 200)
+            self.assertEqual(state["settings"]["local_context"], "65536")
+            self.assertEqual(state["settings"]["local_output"], "8192")
+            environment = self.app.workspace.environment()
+            self.assertEqual(environment["HARNESS2_LOCAL_CONTEXT"], "65536")
+            self.assertEqual(environment["HARNESS2_LOCAL_OUTPUT"], "8192")
+
+    def test_invalid_local_token_limits_do_not_change_saved_settings(self):
+        status, saved, _ = self.request("POST", "/api/settings", {
+            "provider": "local", "local_context": "32768", "local_output": "4096"})
+        self.assertEqual(status, 200, saved)
+        before = (self.root / ".env").read_bytes()
+        invalid = ({"local_context": "0"}, {"local_context": "-1"},
+                   {"local_context": "3.5"}, {"local_context": "not-a-number"},
+                   {"local_context": ""}, {"local_context": True},
+                   {"local_output": "0"}, {"local_output": "-1"},
+                   {"local_output": "4096.5"}, {"local_output": 4096.0},
+                   {"local_context": "4096", "local_output": "4096"},
+                   {"local_context": "4096", "local_output": "8192"})
+        for values in invalid:
+            with self.subTest(values=values):
+                status, result, _ = self.request("POST", "/api/settings", {
+                    "local_model": "must-not-be-saved", **values})
+                self.assertEqual(status, 400, result)
+                self.assertEqual((self.root / ".env").read_bytes(), before)
+
+    def test_local_budget_changes_reject_resume_before_planning_model_work(self):
+        status, saved, _ = self.request("POST", "/api/settings", {
+            "provider": "local", "local_context": "32768", "local_output": "4096"})
+        self.assertEqual(status, 200, saved)
+        record, _ = self.synthetic_record()
+        record["kind"] = "benchmark"
+        record["models"] = self.app.workspace.settings()
+        self.app.jobs._write(record)
+        with patch.object(JobManager, "_plan", return_value=[]) as plan:
+            status, resumed, _ = self.request("POST", f"/api/jobs/{record['id']}/resume", {
+                "confirm": True})
+            self.assertEqual(status, 201, resumed)
+            self.assertEqual(self.wait_job(resumed["id"])["status"], "succeeded")
+            plan.assert_called_once()
+        for changed in ({"local_context": "65536"}, {"local_output": "2048"}):
+            with self.subTest(changed=changed):
+                status, saved, _ = self.request("POST", "/api/settings", {
+                    "local_context": "32768", "local_output": "4096", **changed})
+                self.assertEqual(status, 200, saved)
+                with patch.object(JobManager, "_plan", side_effect=AssertionError(
+                        "Changed budgets must reject resume before planning any model work")) as plan:
+                    status, result, _ = self.request("POST", f"/api/jobs/{record['id']}/resume", {
+                        "confirm": True})
+                    self.assertEqual(status, 400, result)
+                    self.assertIn("connection changed", result["error"])
+                    plan.assert_not_called()
+                self.assertIsNone(self.app.jobs.active_id)
+
     def test_connection_only_requests_model_metadata(self):
         requests = []
         payload = [b'{"data":[{"id":"local-model"}]}']

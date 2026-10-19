@@ -6,7 +6,7 @@
   const views = { overview: "Overview", new: "New experiment", runs: "Runs", setup: "Setup" };
   const statusLabels = { starting: "Starting", running: "Running", succeeded: "Complete", failed: "Failed", partial: "Needs attention", exception: "Failed", cancelled: "Stopped", interrupted: "Interrupted", pending: "Waiting", completed: "Complete", complete: "Complete", skipped: "Skipped" };
   const kindLabels = { demo: "Free demo", benchmark: "Experiment", check: "Environment check", setup: "Benchmark setup", preview: "Experiment plan", judge: "Evaluation", report: "Report", authenticate: "Authentication" };
-  const settingsFields = { local_url: "local-url", local_model: "local-model", project: "project", region: "region", solver: "solver", improver: "improver", judge: "judge", codex_url: "codex-url", codex_model: "codex-model" };
+  const settingsFields = { local_url: "local-url", local_model: "local-model", local_context: "local-context", local_output: "local-output", project: "project", region: "region", solver: "solver", improver: "improver", judge: "judge", codex_url: "codex-url", codex_model: "codex-model" };
   let token = "";
   let state = null;
   let view = "overview";
@@ -318,6 +318,8 @@
     if (provider === "local" && previousProvider && previousProvider !== "local") fillLocalModels();
     previousProvider = provider;
     ["local", "vertex", "custom"].forEach((id) => { $(`#provider-${id}`).hidden = id !== provider; });
+    $("#local-token-limits").hidden = provider !== "local";
+    ["local-context", "local-output"].forEach((id) => { $(`#${id}`).disabled = provider !== "local"; });
     text("#test-connection", provider === "vertex" ? "Check environment" : "Test connection");
     if (provider !== "local") $("#advanced-models").open = true;
     message("#connection-test-message", "");
@@ -658,7 +660,10 @@
   }
   function settingsValues() {
     const result = { provider: $("#provider").value, key_configured: Boolean(state?.settings?.key_configured) };
-    Object.entries(settingsFields).forEach(([key, id]) => { result[key] = $(`#${id}`).value.trim(); });
+    Object.entries(settingsFields).forEach(([key, id]) => {
+      const input = $(`#${id}`);
+      if (!input.disabled) result[key] = input.value.trim();
+    });
     const key = $("#api-key").value.trim();
     if (key) result.api_key = key;
     return result;

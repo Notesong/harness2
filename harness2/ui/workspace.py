@@ -21,6 +21,8 @@ FIELDS = {
     "judge": "HARNESS2_JUDGE_MODEL",
     "local_url": "HARNESS2_LOCAL_BASE_URL",
     "local_model": "HARNESS2_LOCAL_MODEL",
+    "local_context": "HARNESS2_LOCAL_CONTEXT",
+    "local_output": "HARNESS2_LOCAL_OUTPUT",
     "codex_url": "HARNESS2_CODEX_BASE_URL",
     "codex_model": "HARNESS2_CODEX_MODEL",
     "provider": "HARNESS2_UI_PROVIDER",
@@ -107,6 +109,8 @@ class Workspace:
         result["region"] = result["region"] or "global"
         result["local_url"] = result["local_url"] or "http://127.0.0.1:8087/v1"
         result["local_model"] = result["local_model"] or "qwen3.8-local"
+        result["local_context"] = result["local_context"] or "32768"
+        result["local_output"] = result["local_output"] or "4096"
         result["key_configured"] = any(env.get(name) for name in SECRET_FIELDS)
         return result
 
@@ -117,6 +121,8 @@ class Workspace:
         for key in FIELDS:
             if key in data:
                 value = data[key]
+                if key in ("local_context", "local_output") and type(value) is int:
+                    value = str(value)
                 if (
                     not isinstance(value, str)
                     or len(value) > 2048
@@ -124,6 +130,17 @@ class Workspace:
                 ):
                     raise ValueError(f"Invalid value for {key}.")
                 current[key] = value.strip()
+        for key, label in (("local_context", "Local context window"),
+                           ("local_output", "Maximum local output")):
+            try:
+                limit = int(current[key])
+            except ValueError as exc:
+                raise ValueError(f"{label} must be a positive integer.") from exc
+            if limit < 1:
+                raise ValueError(f"{label} must be a positive integer.")
+            current[key] = str(limit)
+        if int(current["local_output"]) >= int(current["local_context"]):
+            raise ValueError("Maximum local output must be smaller than the local context window.")
         if current["provider"] not in ("local", "vertex", "custom"):
             raise ValueError("Choose a local, Vertex, or custom connection.")
         if current["provider"] == "local":

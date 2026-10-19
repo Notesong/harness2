@@ -44,6 +44,13 @@ are stored in the workspace's ignored `.env`. The local profile configures
 OpenCode and the judge together; see [LOCAL_MODELS.md](LOCAL_MODELS.md) for
 context limits and server setup. Studio does not start or download a model.
 
+**Advanced model settings** shows the local context window and maximum output
+in tokens, defaulting to 32,768 and 4,096. Match the context window configured
+on your running server, and keep output smaller than context. These fields tell
+Harness² the budget available to OpenCode; changing them does not restart or
+resize the model server. Saved budget changes apply to new operations and are
+part of an experiment's resume identity.
+
 Studio's complete local pipeline currently supports JobBench with OpenCode.
 LAB's host executor can use a local model through the CLI, but its judge needs
 separate provider configuration. Studio blocks that incomplete local pipeline.

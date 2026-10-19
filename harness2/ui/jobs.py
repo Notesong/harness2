@@ -28,6 +28,8 @@ MODEL_FIELDS = (
     "judge",
     "local_url",
     "local_model",
+    "local_context",
+    "local_output",
     "codex_url",
     "codex_model",
 )
