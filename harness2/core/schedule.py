@@ -21,7 +21,6 @@ globs over one. Scheme: <bench>-<substrate>-<mode><k>[-s<seed>][-<tag>].
 from __future__ import annotations
 
 import json
-import os
 import random
 import re
 import traceback
@@ -33,7 +32,7 @@ from pathlib import Path
 from typing import Mapping, Sequence
 
 from harness2 import config
-from harness2.locking import file_lock
+from harness2.locking import atomic_replace, file_lock
 
 from . import library as library_store
 from . import recursion, runmark, selection
@@ -325,7 +324,7 @@ def _write_summary(summary_path: Path, res: TaskResult) -> None:
         tmp = summary_path.with_suffix(".json.tmp")
         try:
             tmp.write_text(json.dumps(merged, indent=2, default=str), encoding="utf-8", newline="\n")
-            os.replace(tmp, summary_path)
+            atomic_replace(tmp, summary_path)
         finally:
             tmp.unlink(missing_ok=True)
 

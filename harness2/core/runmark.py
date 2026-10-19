@@ -23,12 +23,12 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import tempfile
 import time
 from pathlib import Path
 
 from harness2 import config
+from harness2.locking import atomic_replace
 
 MARK = ".adapt_complete"
 
@@ -84,7 +84,7 @@ def mark_complete(
         json.dump(payload, stream, indent=2, sort_keys=True)
     final = d / MARK
     try:
-        os.replace(tmp, final)
+        atomic_replace(tmp, final)
     finally:
         tmp.unlink(missing_ok=True)
     return Path(where) / MARK

@@ -85,6 +85,16 @@ Integration tests use the patched upstream judge to exercise concurrent writes,
 exception release, owner death, and contention lasting longer than ten seconds;
 CI stages the pinned judge on each supported Windows and Ubuntu Python version.
 
+A full Windows run exposed an intermittent `WinError 5` during an otherwise
+serialized completion-marker replacement. Its specific external cause was not
+established. Completion markers and summaries now share a bounded retry for
+Windows access/sharing conflicts without deleting the previous destination.
+A real Windows reader opened without delete sharing proves that this kind of
+conflict can recover after the reader closes; separate tests cover a persistent
+conflict, immediate nonretryable failures, and preservation of existing results
+and cleanup of temporary files when a replacement fails. POSIX errors still
+propagate immediately.
+
 Regression checks cover rejected credentials before metadata or settings writes,
 actual log filtering, deep read-only scratch files, failed staging and retry
 cleanup, final cleanup warnings, and preservation of partial output on errors.

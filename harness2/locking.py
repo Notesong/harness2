@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Cross-process locks for atomic, read/merge/write result updates."""
+"""Cross-process locks and atomic replacement for result updates."""
 
 import errno
 import os
@@ -21,6 +21,27 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from harness2 import config
+
+
+def atomic_replace(source: Path, target: Path) -> None:
+    """Replace a file, briefly retrying Windows access or sharing conflicts.
+
+    A reader without delete sharing can temporarily prevent replacement on
+    Windows. Keep the old target intact throughout; permanent errors still
+    propagate after a one-second retry window. Other platforms do not retry.
+    """
+    deadline = time.monotonic() + 1.0
+    while True:
+        try:
+            os.replace(source, target)
+            return
+        except OSError as exc:
+            if os.name != "nt" or getattr(exc, "winerror", None) not in (5, 32, 33):
+                raise
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise
+            time.sleep(min(0.02, remaining))
 
 
 @contextmanager
