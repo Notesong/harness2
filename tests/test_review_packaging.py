@@ -37,7 +37,7 @@ class PackagingReviewTests(unittest.TestCase):
         package.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(config.__file__, package / "config.py")
         with patch.dict(os.environ, {}, clear=True), patch("os.getcwd", return_value=str(self.workspace)):
-            return runpy.run_path(str(package / "config.py"))
+            return runpy.run_path(str(package / "config.py"), run_name="harness2._config_layout")
 
     def test_installed_assets_cannot_be_shadowed_by_working_directory(self):
         package = self.root / "site-packages/harness2"

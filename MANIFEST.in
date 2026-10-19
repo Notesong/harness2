@@ -1,6 +1,8 @@
 include README.md .env.example .gitattributes
+include Launch?Harness2.cmd
 recursive-include docs *.md
 recursive-include scripts *.py *.sh
+recursive-include harness2/ui/assets *.html *.css *.js
 recursive-include third_party *.py *.md *.yaml *.sh *.json *.LICENSE *.diff LICENSE Dockerfile
 include dependencies/README.md dependencies/PINNED.md dependencies/ASSETS.json
 global-exclude __pycache__ *.py[cod] *.log

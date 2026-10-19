@@ -34,6 +34,7 @@ from .. import config
 from ..core import runmark as RM
 from ..core import tree as HT
 from ..core.spec import BenchPrompts, BenchSpec, resolve_channel_model
+from ..local_models import opencode_env
 from ..processes import remove_tree
 from ..processes import run as run_process
 from ..substrate.base import Install, RunRequest
@@ -391,8 +392,8 @@ except Exception as exc:
 """
 
 
-def _lab_env() -> dict[str, str]:
-    return {
+def _lab_env(*, model: str | None = None) -> dict[str, str]:
+    return opencode_env({
         **os.environ,
         "PYTHONPATH": os.pathsep.join((str(config.lab_repo()), str(config.PKG.parent),
                                       os.environ.get("PYTHONPATH", ""))),
@@ -402,7 +403,7 @@ def _lab_env() -> dict[str, str]:
         "PATH": os.pathsep.join((str(config.LAB_PYTHON.parent), str(config.BUN.parent),
                                 str(Path(config.CODEX_DIST) / "codex-path"),
                                 os.environ.get("PATH", ""))),
-    }
+    }, model=model)
 
 
 def _json_or_none(p: Path) -> dict | None:
@@ -673,7 +674,7 @@ class LabAdapter:
                 run_detached(
                     cmd,
                     cwd=config.lab_repo(),
-                    env=_lab_env(),
+                    env=_lab_env(model=self.model),
                     stdin=subprocess.DEVNULL,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,

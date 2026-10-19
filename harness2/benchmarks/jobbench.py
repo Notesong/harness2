@@ -37,6 +37,7 @@ from ..core import runmark as RM
 from ..core import tree as HT
 from ..core.spec import BenchPrompts, BenchSpec, resolve_channel_model
 from ..install import codex_config_error
+from ..local_models import opencode_env
 from ..processes import run as run_process
 from ..substrate.base import Install, RunRequest
 from ..substrate.codex import CodexSubstrate
@@ -792,7 +793,8 @@ class JobBenchAdapter:
             "MAX_CONCURRENT": "1",
             "OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX": str(OUTPUT_TOKEN_MAX),
         }
-        self._run_runner(OC_RUNNER, env, wall=2 * t + 600, label=label)
+        self._run_runner(OC_RUNNER, opencode_env(env, model=config.SOLVER_MODEL_OC),
+                         wall=2 * t + 600, label=label)
         return [self._require_artifacts(task_id, label)]
 
     def _launch_codex(self, req: RunRequest, install: Install) -> list[Path]:
@@ -1113,11 +1115,11 @@ class JobBenchAdapter:
             "--api-base",
             api_base,
             "--max-workers",
-            "8",
+            str(config.JB_JUDGE_WORKERS),
             "--max-retries",
             "3",
             "--timeout-per-rubric",
-            "240",
+            str(config.JB_JUDGE_RUBRIC_TIMEOUT),
             "--evaluated-model",
             label,
         ]
@@ -1127,8 +1129,9 @@ class JobBenchAdapter:
             "JUDGE_REASONING_EFFORT": config.JB_JUDGE_REASONING_EFFORT,
             "VERTEXAI_LOCATION": config.VERTEX_REGION,
         }
+        env.setdefault("JUDGE_MAX_COMPLETION_TOKENS", str(config.JB_JUDGE_OUTPUT))
         try:
-            r = subprocess.run(cmd, env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=1800)
+            r = subprocess.run(cmd, env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=config.JB_JUDGE_TIMEOUT)
         except (subprocess.SubprocessError, OSError) as exc:
             print(f"  [jb] judge subprocess failed for {label}: {exc}", flush=True)
             return False

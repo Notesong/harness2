@@ -33,14 +33,16 @@ harness2-setup = "harness2.cli.setup:main"
 harness2-check = "harness2.cli.check:main"
 harness2-demo = "harness2.cli.demo:main"
 harness2-bridge = "harness2.cli.bridge:main"
+harness2-ui = "harness2.ui.server:main"
 
 [tool.setuptools]
-packages = ["harness2", "harness2.cli", "harness2.core", "harness2.benchmarks", "harness2.substrate", "harness2.third_party"]
+packages = ["harness2", "harness2.cli", "harness2.core", "harness2.benchmarks", "harness2.substrate", "harness2.ui", "harness2.third_party"]
 
 [tool.setuptools.package-dir]
 "harness2.third_party" = "third_party"
 
 [tool.setuptools.package-data]
+"harness2.ui" = ["assets/*.html", "assets/*.css", "assets/*.js"]
 "harness2.third_party" = [
     "README.md", "*/LICENSE", "*/PROVENANCE.md",
     "jb_runner/**/*.md", "jb_runner/**/*.yaml", "jb_runner/**/*.sh",

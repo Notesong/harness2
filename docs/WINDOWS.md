@@ -7,6 +7,12 @@ Model-backed benchmarks also need the tools and credentials below.
 
 ## Install and run the local demo
 
+For the graphical interface, double-click `Launch Harness2.cmd` in the checkout.
+It creates the main Python environment if needed and opens Harness² Studio in
+your browser. The demo works without a model. After manual installation, run
+`.\.venv\Scripts\harness2-ui.exe` instead. See [Studio](UI.md) for its controls
+and [local models](LOCAL_MODELS.md) for llama.cpp setup.
+
 Install Git, Python 3.12, and uv, then open PowerShell:
 
 ```powershell
@@ -29,6 +35,12 @@ $env:PATH = "$PWD\.venv\Scripts;$env:PATH"
 
 Keep the checkout path reasonably short, such as `C:\src\harness2`; upstream
 task archives and generated run directories can contain deeply nested paths.
+
+Use a short source path when building a wheel from an extracted source archive,
+too. On this Windows host, setuptools hit `MAX_PATH` while staging a vendored
+file beneath a long build directory. The same offline build succeeded from a
+short temporary directory. Harness²'s own long-path handling does not change
+the packaging tool's behavior.
 
 ## Benchmark requirements
 

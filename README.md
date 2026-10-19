@@ -80,6 +80,11 @@ inside the tool loop.
 
 ## Install
 
+For a local interface on Windows, double-click **`Launch Harness2.cmd`** after
+installing Python 3.12. It opens **Harness² Studio** in your browser, with a free
+demo, model setup, experiment controls, live logs, and result files. See the
+[Studio guide](docs/UI.md) and [local model guide](docs/LOCAL_MODELS.md).
+
 Use **Windows or Linux, Python 3.12, and [uv](https://docs.astral.sh/uv/getting-started/installation/)**.
 On Windows, run these commands in PowerShell from the repository root:
 

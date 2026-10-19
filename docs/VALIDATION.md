@@ -1,8 +1,9 @@
 # Validation record
 
 This record separates local portability checks from validation of an installed
-benchmark or a model service. The Windows review ran on Windows 11 AMD64
-(`10.0.26300`) with CPython 3.12.10. It did not run a paid model request.
+benchmark or a model service. The original Windows port snapshot passed 50
+tests on Windows 11 AMD64 (`10.0.26300`) with CPython 3.12.10 and made no model
+requests. Later UI and local-provider checks are recorded separately below.
 The CI configuration also targets Ubuntu and Python 3.13; configuration alone
 does not establish that those jobs passed.
 
@@ -15,7 +16,7 @@ does not establish that those jobs passed.
 | Deterministic workflow | The demo runs the real recursion, evidence, selection, library, summary, and resume code. `DemoProposer` edits and selects by script; the executor runs a Python ledger calculation. | This verifies local workflow mechanics, not model quality, benchmark scoring, or access to a provider. |
 | Distribution installation | A newly created virtual environment installed the wheel offline with no dependencies or editable link. Both demo modes ran from a directory outside the checkout, using `python -I` and a minimal environment. | The build reused the development environment's installed setuptools and wheel. This is a fresh runtime installation, not a newly provisioned Windows machine or a fresh online build-isolation test. |
 | Upstream and external tools | The additional upstream checks below used actual OpenCode source, WorkBuddy data, and scratch dependency-lock resolution. | A successful dry-run, stubbed command, or import does not establish end-to-end benchmark execution. |
-| Model and Docker execution | No model request or Docker benchmark run forms part of this local validation. | Credentials, provider permissions, model behavior, Docker drive sharing, Linux mount builds, Harbor task execution, and benchmark scores remain unverified by these checks. |
+| Model and Docker execution | The original port snapshot contained no model requests or Docker benchmark runs. | Credentials, provider permissions, model behavior, Docker drive sharing, Linux mount builds, Harbor task execution, and benchmark scores are not established by the portability checks. |
 
 The wheel demo completed two ledger tasks with `--k 2` in both modes: 28 local
 executions, 32 scripted editor calls, and zero failed tasks. A second invocation
@@ -47,6 +48,85 @@ Only `dependencies/opencode` and its local tools were installed for the
 upstream CLI check. The JobBench/LAB lock checks and downloaded WorkBuddy data
 were separate scratch checks; they do not make the checkout ready for a full
 benchmark run.
+
+## Subsequent UI validation
+
+A normal-host test-suite snapshot passed 75 tests in 37.823 seconds, including
+the browser UI backend, local-provider configuration, and original portability
+regressions. Ruff and all 47 release asset checks passed. Socket tests require
+the normal host environment here: the restricted execution environment blocks
+loopback access with Windows error 10013, so its HTTP test failures do not
+establish an application failure.
+
+The final pre-commit normal-host suite passed **80 tests in 39.181 seconds**:
+50 portability tests, 11 local-provider tests, 17 UI API tests, and two startup
+tests. Ruff, all 47 release asset checks, and `git diff --check` also passed.
+
+Browser checks at 1440-pixel desktop width and 390-pixel narrow width found no
+horizontal overflow. The UI read local `/models` metadata, ran the real
+deterministic `k=2` demo in both modes (two tasks, zero failures), displayed the
+`Total: 85.15` artifact, displayed a diff, and exposed the artifact download.
+The browser console showed no warnings or errors during these checks. The
+actual JobBench preview, cancellation of model confirmation, and UI shutdown
+were also exercised. These UI checks establish those local interactions; they
+do not establish a successful model-driven benchmark or external-provider
+access.
+
+## Local model test: in progress at the UI snapshot
+
+As of **2026-10-19 02:44 UTC** (October 18, 21:44 CDT), an actual JobBench
+baseline was still running. The local test had not completed the baseline,
+adaptation, judge, or report. No benchmark score or successful full workflow is
+claimed by this snapshot.
+
+The owned llama.cpp server used build `b11406`, commit `8216c8462`, with the
+user's existing Unsloth `Qwen3.8-27B-UD-Q3_K_XL.gguf` file (13,146,393,504 bytes)
+read in place. It loaded through Vulkan on an RTX 5060 Ti with 16 GB VRAM,
+leaving about 2.3 GB free after loading. The loopback endpoint was
+`http://127.0.0.1:8087/v1`, alias `qwen3.8-local`, with one slot, a 32,768-token
+context, `q8_0` K/V caches, flash attention, and a 1536 MiB fit margin. The
+server's reasoning budget was 2048 tokens. No unrelated model process was
+terminated.
+
+Completed live checks:
+
+- A text request returned `READY`. A structured tool request returned
+  `add_numbers` with arguments `{"a":2,"b":3}`. Those two probes explicitly
+  disabled template thinking. The warm tool probe generated 36 tokens at
+  23.27 tokens/second; this small probe is not representative of the long task.
+- JobBench's pinned checkout and judge patch were installed. Its locked Python
+  environment installed 52 packages, followed by the setup workflow's
+  supplementary `python-docx` 1.2.0. The real readiness check passed.
+- Exactly one original task, `technical_writers/task1`, was downloaded from
+  JobBench revision `d43a66575635da0d3f6cb9a20976dc1a60f3ffc9`: eight files,
+  43,796 bytes, including its unchanged rubric and supplied external-reference
+  file. All files were size/hash checked. The dataset is explicitly marked
+  partial; the full dataset was not downloaded.
+- The actual OpenCode baseline read the original inputs and fetched the
+  required public formatting reference. Its first 10,867-token prompt ran at
+  491.7 prompt tokens/second; generation slowed to roughly 7–12 tokens/second as
+  the conversation grew. This demonstrated real local-provider transport and
+  tool execution, rather than a mocked runner.
+
+The baseline started at 21:27:21 CDT. At the snapshot it had reached the 32K
+context limit, returned a `length` finish, and recorded an invalid-tool repair.
+OpenCode then started compaction. Read-only metadata from the test's isolated
+OpenCode database confirmed `agent=compaction`, `providerID=local`, and
+`modelID=qwen3.8-local`; compaction had not finished. The profile also selected
+the local small model, preventing a cloud small-model fallback. These facts
+establish routing, not successful recovery or a completed work product.
+
+The actual run retained template thinking; OpenCode's `reasoning: false`
+capability does not disable it. The server settings were not changed mid-run.
+The selected task requires four Markdown documents and an external reference,
+so being the smallest download does not make it a short generation workload.
+The configured `k=1`, parallel, one-task run entails four executor rollouts,
+three adaptation sessions, reflection, and the upstream ten-rubric judge. Its
+single final uses the existing trivial-selection path; it does not exercise a
+blind model-selector session. Logs, probe responses, task provenance, and phase
+metadata are retained under the ignored `runs/local-model-smoke/` directory;
+actual run state is under `runs/jb/`. A later outcome record must distinguish
+completed stages from capacity, timeout, or protocol failures.
 
 ## Packaging and license checks
 

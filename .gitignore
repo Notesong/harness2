@@ -8,6 +8,7 @@ __pycache__/
 build/
 dist/
 .env
+.harness2-ui/
 runs/
 dependencies/*/
 dependencies/*.tmp

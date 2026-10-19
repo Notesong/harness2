@@ -26,6 +26,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from ..local_models import opencode_env
 from ..processes import run as run_process
 
 JOBBENCH = Path(__file__).resolve().parents[1]
@@ -195,7 +196,8 @@ def _attempt(
             code = run_process(
                 _command(cfg, workspace, prompt, title),
                 cwd=cfg.opencode_dir,
-                env={**os.environ, "OPENCODE_PERMISSION": _permission(workspace)},
+                env=opencode_env({**os.environ, "OPENCODE_PERMISSION": _permission(workspace)},
+                                 model=cfg.model_id),
                 stdin=subprocess.DEVNULL,
                 stdout=out,
                 stderr=err,

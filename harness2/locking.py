@@ -24,7 +24,7 @@ from harness2 import config
 
 
 @contextmanager
-def file_lock(path: Path):
+def file_lock(path: Path, *, blocking: bool = True):
     """Hold an exclusive lock until exit, including across threads and processes.
 
     Keep the lock file: deleting it can let another process lock a different
@@ -45,6 +45,8 @@ def file_lock(path: Path):
                 except OSError as exc:
                     if exc.errno not in (errno.EACCES, errno.EAGAIN, errno.EDEADLK):
                         raise
+                    if not blocking:
+                        raise BlockingIOError("This workspace is already locked.") from exc
                     time.sleep(0.05)
             try:
                 yield
@@ -54,7 +56,7 @@ def file_lock(path: Path):
         else:
             import fcntl
 
-            fcntl.flock(handle, fcntl.LOCK_EX)
+            fcntl.flock(handle, fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB))
             try:
                 yield
             finally:

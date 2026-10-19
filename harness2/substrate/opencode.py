@@ -37,6 +37,7 @@ from .. import config
 from ..core import runmark as RM
 from ..core import tree as HT
 from ..core.tree import SurfaceSpec
+from ..local_models import opencode_env
 from .base import Install, Launcher, RunRequest
 
 OPENCODE_SURFACE = SurfaceSpec(
@@ -284,7 +285,7 @@ class OpencodeSubstrate:
         env = dict(base_env)
         env["OPENCODE_PERMISSION"] = json.dumps({"external_directory": allow})
         env["OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX"] = str(int(output_token_max))
-        return env
+        return opencode_env(env)
 
     def execute(
         self, task_ref: str, install: Install, run_ids: list[str], timeout: int

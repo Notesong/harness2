@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -41,6 +42,7 @@ from pathlib import Path
 from .. import config
 from ..core import schedule
 from ..core.proposer import Proposer
+from ..local_models import profile_identity
 from . import _common as C
 
 
@@ -223,6 +225,9 @@ def _check_identity(adapter, args, namespace_dir: Path) -> None:
         "domains": sorted(_csv(args.only_domains)),
         "seed": args.seed,
     }
+    local = profile_identity(os.environ)
+    if local is not None:
+        identity["local_profile"] = local
     namespace_dir.mkdir(parents=True, exist_ok=True)
     path = namespace_dir / "config.json"
     if path.is_file():

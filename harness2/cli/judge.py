@@ -32,11 +32,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
 from .. import config
 from ..core import judge as J
+from ..local_models import check_profile_identity
 from . import _common as C
 
 _DERIVED = ("frac", "graded")
@@ -167,8 +169,17 @@ def main(argv: list[str] | None = None) -> int:
     ns = C.summary_namespace(adapter, args.k, seed=args.seed)
     ns_dir = C.runs_root_for(adapter) / ns
     identity = ns_dir / "config.json"
-    if identity.is_file() and json.loads(identity.read_text(encoding="utf-8")).get("judge") != config.JUDGE_MODEL:
-        raise SystemExit("Judge model changed for this experiment; choose a new HARNESS2_RUNS_DIR")
+    if identity.is_file():
+        recorded = json.loads(identity.read_text(encoding="utf-8"))
+        if recorded.get("judge") != config.JUDGE_MODEL:
+            raise SystemExit("Judge model changed for this experiment; choose a new HARNESS2_RUNS_DIR")
+        if (args.bench == "jb" and "judge_endpoint" in recorded
+                and recorded["judge_endpoint"] != config.JB_JUDGE_API_BASE):
+            raise SystemExit("Judge endpoint changed for this experiment; choose a new HARNESS2_RUNS_DIR")
+        try:
+            check_profile_identity(recorded, os.environ)
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
     if not ns_dir.is_dir():
         raise SystemExit(
             f"nothing to judge: {ns_dir} does not exist — has the sweep `{ns}` run on this machine?"

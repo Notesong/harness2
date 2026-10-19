@@ -21,6 +21,8 @@ import shutil
 import sys
 from pathlib import Path
 
+from .local_models import profile_defaults
+
 PKG = Path(__file__).resolve().parent
 ROOT = PKG.parent if (PKG.parent / "pyproject.toml").is_file() else Path.cwd()
 # Runner assets belong to the installed distribution. The invocation directory
@@ -99,6 +101,7 @@ def load_dotenv(path: Path = ROOT / ".env") -> None:
 
 
 load_dotenv()
+os.environ.update(profile_defaults(os.environ))
 
 
 def env(name: str, default=None):
@@ -208,6 +211,17 @@ VERTEX_OPENAI_URL = (
 JB_JUDGE_API_BASE = env("HARNESS2_JUDGE_BASE_URL", VERTEX_OPENAI_URL if VERTEX_PROJECT else "")
 JB_JUDGE_API_KEY = env("HARNESS2_JUDGE_API_KEY", "")
 JB_JUDGE_REASONING_EFFORT = "low"
+_local_judge = bool(
+    env("HARNESS2_LOCAL_BASE_URL")
+    and JB_JUDGE_API_BASE.rstrip("/") == env("HARNESS2_LOCAL_BASE_URL", "").rstrip("/")
+    and JUDGE_MODEL == env("HARNESS2_LOCAL_MODEL")
+)
+JB_JUDGE_WORKERS = env_int("HARNESS2_JUDGE_WORKERS", 1 if _local_judge else 8)
+JB_JUDGE_RUBRIC_TIMEOUT = env_int("HARNESS2_JUDGE_RUBRIC_TIMEOUT", 600 if _local_judge else 240)
+JB_JUDGE_TIMEOUT = env_int("HARNESS2_JUDGE_TIMEOUT", 7200 if _local_judge else 1800)
+JB_JUDGE_OUTPUT = env_int(
+    "HARNESS2_JUDGE_OUTPUT", env_int("HARNESS2_LOCAL_OUTPUT", 4096) if _local_judge else 65536
+)
 JB_REPORTING_JUDGE_DETAILS = ""
 JB_OBS_TRUNC = 50000
 

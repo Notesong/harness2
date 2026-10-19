@@ -34,6 +34,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .. import config
+from ..local_models import opencode_env
 from ..processes import run as run_process
 from .spec import ChannelSpec
 
@@ -280,6 +281,7 @@ class Proposer:
         )
         env["XDG_DATA_HOME"] = str(cwd / ".ocdata")
         env["XDG_STATE_HOME"] = str(cwd / ".ocstate")
+        env = opencode_env(env, model=self.spec.model)
 
         cmd = [
             str(config.BUN),
