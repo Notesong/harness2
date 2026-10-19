@@ -1,4 +1,4 @@
-# Copyright 2026 Google LLC
+# SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -22,6 +22,34 @@ from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from urllib.parse import urlsplit
 
+DUMMY_LOCAL_API_KEY = "local"
+
+
+def validate_api_base_url(value: str) -> str:
+    """Validate a public endpoint identity without accepting or echoing credentials."""
+    value = value.strip()
+    message = (
+        "Use a valid HTTP(S) API base URL without URL credentials, a query, or a fragment."
+    )
+    try:
+        parsed = urlsplit(value)
+        if (
+            parsed.scheme not in ("http", "https")
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or "?" in value
+            or "#" in value
+            or any(char.isspace() or ord(char) < 32 for char in value)
+        ):
+            raise ValueError(message)
+        # Accessing .port rejects malformed and out-of-range ports. Its original
+        # exception may quote URL content, so expose only the fixed message below.
+        parsed.port
+    except ValueError:
+        raise ValueError(message) from None
+    return value.rstrip("/")
+
 
 @dataclass(frozen=True)
 class LocalProfile:
@@ -43,9 +71,7 @@ def profile(environment: Mapping[str, str]) -> LocalProfile | None:
         return None
     if not base or not model:
         raise ValueError("Set both HARNESS2_LOCAL_BASE_URL and HARNESS2_LOCAL_MODEL")
-    parsed = urlsplit(base)
-    if parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.query or parsed.fragment:
-        raise ValueError("HARNESS2_LOCAL_BASE_URL must be an HTTP(S) API base URL, such as http://127.0.0.1:8087/v1")
+    base = validate_api_base_url(base)
     if any(char.isspace() for char in model):
         raise ValueError("HARNESS2_LOCAL_MODEL must be a server model ID without whitespace")
     limits = []
@@ -73,7 +99,7 @@ def profile_defaults(environment: Mapping[str, str]) -> dict[str, str]:
         "HARNESS2_IMPROVER_MODEL": local.opencode_model,
         "HARNESS2_JUDGE_MODEL": local.model,
         "HARNESS2_JUDGE_BASE_URL": local.base_url,
-        "HARNESS2_JUDGE_API_KEY": result.get("HARNESS2_LOCAL_API_KEY") or "local",
+        "HARNESS2_JUDGE_API_KEY": result.get("HARNESS2_LOCAL_API_KEY") or DUMMY_LOCAL_API_KEY,
     }.items():
         if not result.get(key):
             result[key] = value
@@ -135,7 +161,7 @@ def opencode_env(environment: Mapping[str, str], *, model: str | None = None) ->
     if result.get("HARNESS2_LOCAL_API_KEY"):
         options["apiKey"] = result["HARNESS2_LOCAL_API_KEY"]
     else:
-        options.setdefault("apiKey", "local")
+        options.setdefault("apiKey", DUMMY_LOCAL_API_KEY)
     model_config = _object(_object(provider, "models"), local.model)
     model_config.update({
         "id": local.model,

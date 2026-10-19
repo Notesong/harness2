@@ -9,9 +9,16 @@ import platform
 import shutil
 import tempfile
 from pathlib import Path
-from urllib.parse import urlsplit
 
 from .. import config
+from ..local_models import (
+    DUMMY_LOCAL_API_KEY,
+    profile,
+    profile_defaults,
+)
+from ..local_models import (
+    validate_api_base_url as validate_url,
+)
 
 FIELDS = {
     "project": "GOOGLE_CLOUD_PROJECT",
@@ -62,20 +69,6 @@ def dotenv(path: Path) -> dict[str, str]:
             value = value.split(" #", 1)[0].rstrip()
         values[key.strip()] = value
     return values
-
-
-def validate_url(value: str) -> str:
-    parsed = urlsplit(value)
-    if (
-        parsed.scheme not in ("http", "https")
-        or not parsed.hostname
-        or parsed.username
-        or parsed.password
-    ):
-        raise ValueError("Use an http:// or https:// endpoint without credentials in its URL.")
-    if parsed.query or parsed.fragment:
-        raise ValueError("The endpoint should not contain a query or fragment.")
-    return value.rstrip("/")
 
 
 class Workspace:
@@ -181,7 +174,7 @@ class Workspace:
         if current["provider"] == "local":
             updates["HARNESS2_JUDGE_BASE_URL"] = current["local_url"]
             updates["HARNESS2_JUDGE_API_KEY"] = (
-                api_key or self.environment().get("HARNESS2_LOCAL_API_KEY") or "local"
+                api_key or self.environment().get("HARNESS2_LOCAL_API_KEY") or DUMMY_LOCAL_API_KEY
             )
             if api_key:
                 updates["HARNESS2_LOCAL_API_KEY"] = api_key
@@ -280,9 +273,25 @@ class Workspace:
         return result
 
     def secrets(self) -> list[str]:
+        environment = self.environment()
+        dummy_judge = False
+        if (
+            environment.get("HARNESS2_JUDGE_API_KEY") == DUMMY_LOCAL_API_KEY
+            and not environment.get("HARNESS2_LOCAL_API_KEY")
+        ):
+            try:
+                local = profile(environment)
+                resolved = profile_defaults(environment)
+                dummy_judge = local is not None and (
+                    resolved["HARNESS2_JUDGE_MODEL"] == local.model
+                    and resolved["HARNESS2_JUDGE_BASE_URL"].rstrip("/") == local.base_url
+                )
+            except ValueError:
+                pass
         return [
             value
-            for name, value in self.environment().items()
+            for name, value in environment.items()
             if any(part in name.upper() for part in ("KEY", "TOKEN", "SECRET", "PASSWORD"))
             and value
+            and not (dummy_judge and name == "HARNESS2_JUDGE_API_KEY")
         ]

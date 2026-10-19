@@ -49,3 +49,41 @@ normalization, and bundled runner bytes are checked against the asset manifest.
 pinned upstream checks, model-backed execution, and Docker-backed execution.
 An unperformed tier is not implied by a passing lower tier. The port is kept on
 the `windows-support` branch for review; it is not merged into `main`.
+
+## Follow-up review
+
+The local-provider and Studio review found three concrete defects:
+
+- CLI local endpoints accepted embedded URL credentials, although Studio
+  rejected them. Both now use the same HTTP(S) base validator, which rejects
+  user information, queries, fragments, and malformed ports before an endpoint
+  can enter public experiment identity. Errors do not echo the rejected URL.
+- The no-auth judge placeholder `local` entered the secret filter and damaged
+  ordinary log text. That placeholder is exempt only for a matching local judge
+  profile without a real local API key. Genuine keys, including short values
+  and a real local key whose value happens to be `local`, remain redacted.
+- JobBench's OpenCode staging and retry paths bypassed the portable tree
+  remover. They now require successful cleanup before copying inputs or
+  launching another attempt. Final cleanup failures are logged while delivered
+  output remains available; unexpected runner exceptions retain recoverable
+  scratch output.
+
+Regression checks cover rejected credentials before metadata or settings writes,
+actual log filtering, deep read-only scratch files, failed staging and retry
+cleanup, final cleanup warnings, and preservation of partial output on errors.
+
+The attribution audit compared added files with upstream source and the
+repository's contribution guide. Six copied Google copyright assertions were
+replaced with Apache-2.0 SPDX identifiers, retaining their license text.
+Existing upstream notices and all third-party licenses remain intact. The
+JobBench Codex runner retains its Google notice because its command and prompt
+blocks reuse original Google-authored Python. This records source provenance;
+it does not decide ownership of newly contributed code.
+
+The public first-run compaction report was published before the web-enabled
+same-task 64K rerun. That creates a possible information channel even though
+there is no evidence the model accessed the report. The rerun is an engineering
+smoke test; its simultaneous context, output, and reasoning changes also prevent
+attributing any difference to context alone. Future task-specific forensic
+material should stay private until the relevant experiments finish. The
+[validation record](VALIDATION.md) preserves these limits.

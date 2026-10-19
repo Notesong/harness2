@@ -1,4 +1,4 @@
-# Copyright 2026 Google LLC
+# SPDX-License-Identifier: Apache-2.0
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy at https://www.apache.org/licenses/LICENSE-2.0
@@ -157,10 +157,14 @@ def remove_tree(path, *, ignore_errors: bool = False) -> None:
         os.chmod(filename, stat.S_IWRITE | stat.S_IREAD)
         function(filename)
 
+    target = config.long_path(path)
     try:
-        shutil.rmtree(config.long_path(path), onerror=writable if os.name == "nt" else None)
+        shutil.rmtree(target, onerror=writable if os.name == "nt" else None)
     except FileNotFoundError:
-        pass
+        # A disappearing child can interrupt rmtree while stale siblings remain.
+        # Broken links also remain targets, even though Path.exists() is false.
+        if not ignore_errors and os.path.lexists(target):
+            raise
     except OSError:
         if not ignore_errors:
             raise
