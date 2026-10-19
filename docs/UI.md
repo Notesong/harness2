@@ -64,6 +64,11 @@ and task data and can take time. **Check environment** records detailed readines
 information in Runs. A presence check alone does not prove model access.
 
 In **New experiment**, choose one domain and begin with one task and one branch.
+The initial search approach is **Parallel**. With one branch, it schedules four
+full executions per task; **Compare both** schedules seven, sharing the
+baseline. Harness editing, reflection, and judging add model calls. The start
+confirmation shows the planned execution count; saved work can reduce it and
+retries can add work.
 **Check the plan** previews task selection without a model completion. **Start
 experiment** shows the connection and compute use before it starts. The normal
 pipeline checks setup, runs refinement, judges the adopted output, and builds

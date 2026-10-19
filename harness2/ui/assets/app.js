@@ -593,7 +593,8 @@
     text("#confirm-description", resume ? "The run will continue from the results already available. Remaining work may use your configured models." : "This experiment will run real tasks, propose harness changes, and evaluate the results using your configured models.");
     const benchmarkId = params.benchmark === "wb" ? `wb-${params.subset}` : params.benchmark;
     const benchmark = state?.benchmarks?.find((item) => item.id === benchmarkId);
-    $("#confirm-facts").replaceChildren(element("p", "", `${benchmark?.name || "Experiment"} · ${(params.domains || []).map(human).join(", ") || "Selected domains"}`), element("p", "", `Up to ${params.max_tasks || 1} task(s) per domain · ${params.k || 1} branch(es) · ${params.workers || 1} parallel domain(s)`), element("p", "", providerLabel()));
+    const executions = ((!params.mode || params.mode === "both") ? 7 : 4) * (params.k || 1);
+    $("#confirm-facts").replaceChildren(element("p", "", `${benchmark?.name || "Experiment"} · ${(params.domains || []).map(human).join(", ") || "Selected domains"}`), element("p", "", `Up to ${params.max_tasks || 1} task(s) per domain · ${params.k || 1} branch(es) · ${params.workers || 1} parallel domain(s)`), element("p", "", `${executions} planned full executions per task, plus harness editing, reflection, and judging. Saved work may reduce this; retries can add work.`), element("p", "", providerLabel()));
     text("#confirm-compute", state?.settings?.provider === "local" ? "Your local model will use this machine’s computing resources. You can stop the run from Runs." : "This uses your connected provider and may incur charges. You can stop the run from Runs.");
     text("#confirm-accept", resume ? "Resume run" : "Start experiment");
     dialog.returnValue = "cancel";
