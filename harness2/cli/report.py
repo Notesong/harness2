@@ -40,7 +40,7 @@ def _spend_and_fallbacks(ns_dir: Path, modes: tuple[str, ...], k: int) -> tuple[
     usd: dict[tuple[str, int], float] = {}
     for summary_path in sorted(ns_dir.glob("*/summary.json")):
         try:
-            summary = json.loads(summary_path.read_text())
+            summary = json.loads(summary_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             print(f"  ! skipping unreadable {summary_path}: {exc}", flush=True)
             continue

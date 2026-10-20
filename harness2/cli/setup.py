@@ -46,18 +46,32 @@ def main(argv=None):
     name = {"jb": "job-bench-eval", "lab": "harvey-labs", "wb": "workbuddy-bench"}[args.benchmark]
     try:
         if not dry:
-            for binary in ("git", "uv", "npm") + (
-                ("docker", "curl") if args.benchmark == "wb" else ()
-            ):
+            for binary in ("git", "uv", "npm") + (("docker",) if args.benchmark == "wb" else ()):
                 if not shutil.which(binary):
                     raise RuntimeError(f"Missing {binary}; see README.md")
+            if args.benchmark == "wb":
+                install.require_linux_docker()
         install.clone("opencode", dry_run=dry)
         install.patch("opencode", dry_run=dry)
         install.run(
             ["npm", "install", "--prefix", config.DEPENDENCIES / "tools", "bun@1.3.11"], dry_run=dry
         )
+        bun_args = [config.bun_binary(), "install", "--frozen-lockfile", "--ignore-scripts"]
+        if config.IS_WINDOWS:
+            # The CLI does not need desktop/web dependencies. Copying a flat
+            # layout avoids Bun's Windows isolated-linker/hardlink failures.
+            bun_args += [
+                "--filter",
+                "./packages/opencode",
+                "--network-concurrency",
+                "1",
+                "--backend",
+                "copyfile",
+                "--linker",
+                "hoisted",
+            ]
         install.run(
-            [config.BUN, "install", "--frozen-lockfile", "--ignore-scripts"],
+            bun_args,
             cwd=config.OPENCODE_DIR,
             dry_run=dry,
         )
@@ -68,7 +82,7 @@ def main(argv=None):
         install.run(["uv", "sync", "--locked", "--python", "3.12"], cwd=repo, dry_run=dry)
         if args.benchmark == "jb":
             install.run(
-                ["uv", "pip", "install", "--python", repo / ".venv/bin/python", "python-docx"],
+                ["uv", "pip", "install", "--python", config.venv_python(repo), "python-docx"],
                 dry_run=dry,
             )
             install.download_jobbench(dry_run=dry)
@@ -79,7 +93,7 @@ def main(argv=None):
                     "pip",
                     "install",
                     "--python",
-                    repo / ".venv/bin/python",
+                    config.venv_python(repo),
                     "google-auth[requests]",
                 ],
                 dry_run=dry,
@@ -87,26 +101,12 @@ def main(argv=None):
         else:
             install.workbuddy_models(dry_run=dry)
             subsets = [args.subset] if args.subset else ["office", "web", "code"]
-            install.run(
-                ["bash", "scripts/dataset/fetch-dataset.sh", *subsets], cwd=repo, dry_run=dry
-            )
+            install.download_workbuddy(subsets, dry_run=dry)
             if args.substrate == "oc":
-                install.run(
-                    [
-                        "uv",
-                        "run",
-                        "--no-sync",
-                        "bash",
-                        "scripts/harness/build-harness-mounts.sh",
-                        "--harness",
-                        "opencode/1.14.18",
-                    ],
-                    cwd=repo,
-                    dry_run=dry,
-                )
+                install.build_workbuddy_mount(dry_run=dry)
         if args.substrate == "cx":
-            install.codex(dry_run=dry)
-    except (OSError, RuntimeError, ValueError, subprocess.CalledProcessError) as exc:
+            install.codex(dry_run=dry, containers=args.benchmark == "wb")
+    except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
         p.exit(1, f"setup failed: {exc}\n")
     print(
         "Setup plan complete."

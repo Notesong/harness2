@@ -7,12 +7,14 @@ name = "harness2"
 version = "0.1.0"
 description = "Harness²: Recursive Agent Harnessing for an Open World"
 readme = "README.md"
-license = "Apache-2.0"
+license = "Apache-2.0 AND MIT AND LicenseRef-WorkBuddy-Bench"
+license-files = ["LICENSE", "third_party/*/LICENSE", "third_party/licenses/*.LICENSE"]
 requires-python = ">=3.12,<3.14"
 classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Operating System :: POSIX",
+    "Operating System :: Microsoft :: Windows",
 ]
 authors = [
     { name = "Google LLC" },
@@ -31,9 +33,28 @@ harness2-setup = "harness2.cli.setup:main"
 harness2-check = "harness2.cli.check:main"
 harness2-demo = "harness2.cli.demo:main"
 harness2-bridge = "harness2.cli.bridge:main"
+harness2-ui = "harness2.ui.server:main"
+harness2-local-run = "harness2.cli.local_run:main"
 
-[tool.setuptools.packages.find]
-include = ["harness2*"]
+[tool.setuptools]
+packages = ["harness2", "harness2.cli", "harness2.core", "harness2.benchmarks", "harness2.substrate", "harness2.ui", "harness2.third_party"]
+
+[tool.setuptools.package-dir]
+"harness2.third_party" = "third_party"
+
+[tool.setuptools.package-data]
+"harness2.ui" = ["assets/*.html", "assets/*.css", "assets/*.js"]
+"harness2.third_party" = [
+    "README.md", "*/LICENSE", "*/PROVENANCE.md",
+    "jb_runner/**/*.md", "jb_runner/**/*.yaml", "jb_runner/**/*.sh",
+    "lab_runner/**/*.py", "lab_runner/**/*.md",
+    "wb_runner/**/*.py", "wb_runner/**/*.md", "wb_runner/**/*.yaml",
+    "wb_runner/**/*.json", "wb_runner/**/Dockerfile",
+    "licenses/*.LICENSE", "patches/*.diff",
+]
+
+[tool.setuptools.exclude-package-data]
+"*" = ["**/__pycache__/*", "**/*.pyc"]
 
 [tool.ruff]
 target-version = "py312"

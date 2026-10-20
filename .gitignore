@@ -1,0 +1,15 @@
+.venv/
+.test-tmp/
+.tmp/
+.ruff_cache/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.env
+.harness2-ui/
+.harness2/
+runs/
+dependencies/*/
+dependencies/*.tmp

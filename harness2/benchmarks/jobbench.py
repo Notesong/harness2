@@ -24,7 +24,6 @@ import json
 import os
 import re
 import shutil
-import signal
 import subprocess
 import sys
 import tempfile
@@ -38,6 +37,8 @@ from ..core import runmark as RM
 from ..core import tree as HT
 from ..core.spec import BenchPrompts, BenchSpec, resolve_channel_model
 from ..install import codex_config_error
+from ..local_models import opencode_env
+from ..processes import run as run_process
 from ..substrate.base import Install, RunRequest
 from ..substrate.codex import CodexSubstrate
 from ..substrate.opencode import OUTPUT_TOKEN_MAX, OpencodeSubstrate
@@ -47,26 +48,16 @@ _RUNNER_DIR = config.THIRD_PARTY / "jb_runner"
 _STORE_SEED_LOCK = threading.Lock()
 
 OC_RUNNER = Path(__file__).resolve().parent / "jb_opencode_runner.py"
-CX_RUNNER = _RUNNER_DIR / "run_benchmark_codex_cli_adapt.sh"
+CX_RUNNER = Path(__file__).resolve().parent / "jb_codex_runner.py"
 OC_BASE_HARNESS = _RUNNER_DIR / "harness_baseline_oc"
 CX_BASE_HARNESS = _RUNNER_DIR / "codex_base_harness"
 
 
 def run_detached(cmd: list[str], *, timeout: int, **kw) -> None:
-    """Run `cmd` in its own process group and kill the group on a wall timeout."""
-    proc = subprocess.Popen(cmd, start_new_session=True, **kw)
-    try:
-        proc.wait(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except (ProcessLookupError, PermissionError):
-            proc.kill()
-        proc.wait()
-        raise
-
-    if proc.returncode != 0:
-        raise RuntimeError(f"Benchmark runner exited with status {proc.returncode}")
+    """Run `cmd` with a native wall timeout and process-tree cleanup."""
+    result = run_process(cmd, timeout=timeout, **kw)
+    if result.returncode != 0:
+        raise RuntimeError(f"Benchmark runner exited with status {result.returncode}")
 
 
 def _join(*parts: str) -> str:
@@ -536,7 +527,7 @@ mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
 files = {}
 for f in sorted(p for p in run_dir.rglob("*") if p.is_file()):
-    rel = str(f.relative_to(run_dir))
+    rel = f.relative_to(run_dir).as_posix()
     try:
         files[rel] = str(mod.convert_file_to_text(f))
     except Exception as exc:                       # per-file tool failure, recorded in place
@@ -802,7 +793,8 @@ class JobBenchAdapter:
             "MAX_CONCURRENT": "1",
             "OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX": str(OUTPUT_TOKEN_MAX),
         }
-        self._run_runner(OC_RUNNER, env, wall=2 * t + 600, label=label)
+        self._run_runner(OC_RUNNER, opencode_env(env, model=config.SOLVER_MODEL_OC),
+                         wall=2 * t + 600, label=label)
         return [self._require_artifacts(task_id, label)]
 
     def _launch_codex(self, req: RunRequest, install: Install) -> list[Path]:
@@ -815,7 +807,7 @@ class JobBenchAdapter:
         env = self.substrate.exec_env(os.environ, codex_home=codex_home)
         env.update(
             {
-                "HARNESS2_CODEX_BIN": str(Path(config.CODEX_DIST) / "codex"),
+                "HARNESS2_CODEX_BIN": str(config.codex_binary()),
                 "TASK_IDS": task_id,
                 "LABEL": label,
                 "HARNESS_RENDER_DIR": str(install.staging_dir),
@@ -837,9 +829,13 @@ class JobBenchAdapter:
             )
         env = {
             **env,
-            "PATH": f"{config.JB_JUDGE_PYTHON.parent}:{config.BUN.parent}:" + env.get("PATH", ""),
+            "PATH": os.pathsep.join((str(config.JB_JUDGE_PYTHON.parent),
+                                     str(config.BUN.parent), env.get("PATH", ""))),
+            "PYTHONPATH": os.pathsep.join((str(config.PKG.parent),
+                                          env.get("PYTHONPATH", ""))),
+            "PYTHONUTF8": "1",
         }
-        argv = ["bash", str(runner)] if runner.suffix == ".sh" else [sys.executable, str(runner)]
+        argv = [sys.executable, "-m", f"harness2.benchmarks.{runner.stem}"]
         try:
             run_detached(argv, env=env, stdin=subprocess.DEVNULL, timeout=wall)
         except subprocess.TimeoutExpired:
@@ -893,7 +889,7 @@ class JobBenchAdapter:
                 r = subprocess.run(
                     [str(py), "-c", _EXTRACT_DRIVER, str(judge_py), key],
                     capture_output=True,
-                    text=True,
+                    text=True, encoding="utf-8", errors="replace",
                     timeout=900,
                 )
                 if r.returncode == 0:
@@ -916,7 +912,7 @@ class JobBenchAdapter:
         parts: list[str] = []
         images: list[str] = []
         for f in sorted(p for p in d.rglob("*") if p.is_file()):
-            rel = str(f.relative_to(d))
+            rel = f.relative_to(d).as_posix()
             if f.suffix.lower().lstrip(".") in _VISION_EXTS:
                 images.append(str(f))
             try:
@@ -985,7 +981,7 @@ class JobBenchAdapter:
             r = subprocess.run(
                 [str(py), "-c", "import pandas, openpyxl, docx"],
                 capture_output=True,
-                text=True,
+                text=True, encoding="utf-8", errors="replace",
                 timeout=300,
             )
         except (subprocess.SubprocessError, OSError) as exc:
@@ -1091,7 +1087,7 @@ class JobBenchAdapter:
                 or subprocess.run(
                     ["gcloud", "auth", "application-default", "print-access-token"],
                     capture_output=True,
-                    text=True,
+                    text=True, encoding="utf-8", errors="replace",
                     timeout=60,
                 ).stdout.strip()
             )
@@ -1119,11 +1115,11 @@ class JobBenchAdapter:
             "--api-base",
             api_base,
             "--max-workers",
-            "8",
+            str(config.JB_JUDGE_WORKERS),
             "--max-retries",
             "3",
             "--timeout-per-rubric",
-            "240",
+            str(config.JB_JUDGE_RUBRIC_TIMEOUT),
             "--evaluated-model",
             label,
         ]
@@ -1133,8 +1129,9 @@ class JobBenchAdapter:
             "JUDGE_REASONING_EFFORT": config.JB_JUDGE_REASONING_EFFORT,
             "VERTEXAI_LOCATION": config.VERTEX_REGION,
         }
+        env.setdefault("JUDGE_MAX_COMPLETION_TOKENS", str(config.JB_JUDGE_OUTPUT))
         try:
-            r = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=1800)
+            r = subprocess.run(cmd, env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=config.JB_JUDGE_TIMEOUT)
         except (subprocess.SubprocessError, OSError) as exc:
             print(f"  [jb] judge subprocess failed for {label}: {exc}", flush=True)
             return False

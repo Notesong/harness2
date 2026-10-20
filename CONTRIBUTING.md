@@ -1,33 +1,44 @@
-# How to contribute
+# Contributing
 
-We'd love to accept your patches and contributions to this project.
+This is [Notesong's fork](https://github.com/Notesong/harness2) of
+[Google Research's Harness²](https://github.com/google-research/harness2).
+See [the fork overview](docs/FORK.md) for the changes and their validation scope.
 
-## Before you begin
+## Changes to this fork
 
-### Sign our Contributor License Agreement
+Open an issue or pull request in this repository. Describe the problem, the
+resulting behavior, and how it was checked. Distinguish scripted fixtures and
+mocked services from actual model or Docker execution. Keep unrelated changes
+separate, and update the relevant guide when behavior changes.
 
-Contributions to this project must be accompanied by a
-[Contributor License Agreement](https://cla.developers.google.com/about) (CLA).
-You (or your employer) retain the copyright to your contribution; this simply
-gives us permission to use and redistribute your contributions as part of the
-project.
+Use a development environment with Python 3.12 or 3.13 and Node.js 22 for the
+UI checks. From the repository root, run the checks appropriate to your change:
 
-If you or your current employer have already signed the Google CLA (even if it
-was for a different project), you probably don't need to do it again.
+```text
+python -m unittest discover -s tests -v
+node --test tests/ui_story.test.cjs tests/profile_ui.test.cjs tests/capability_ui.test.cjs
+python scripts/check_provenance.py
+ruff check harness2 tests scripts
+harness2-demo --output runs/demo --k 2
+```
 
-Visit <https://cla.developers.google.com/> to see your current agreements or to
-sign a new one.
+Install the package and Ruff into that environment first with
+`python -m pip install -e . ruff`. See
+[setup](docs/SETUP.md), [Windows](docs/WINDOWS.md), and
+[the validation instructions](docs/VALIDATION.md#repeating-local-checks).
+Platform-specific tests may explicitly skip where a required native facility
+or privilege is unavailable. Do not replace a failing integration with a mock
+without documenting the resulting evidence limit.
 
-### Review our community guidelines
+Preserve existing copyright and license notices. Bundled third-party changes
+need accurate provenance and refreshed asset hashes; see
+[third-party assets](third_party/README.md). Do not commit credentials, model
+weights, downloaded datasets, local profile/catalog archives, or run artifacts.
 
-This project follows
-[Google's Open Source Community Guidelines](https://opensource.google/conduct/).
+## Contributions to the original project
 
-## Contribution process
-
-### Code reviews
-
-All submissions, including submissions by project members, require review. We
-use GitHub pull requests for this purpose. Consult
-[GitHub Help](https://help.github.com/articles/about-pull-requests/) for more
-information on using pull requests.
+Submit upstream changes to [google-research/harness2](https://github.com/google-research/harness2)
+and follow its [contribution guide](https://github.com/google-research/harness2/blob/main/CONTRIBUTING.md),
+including its Google Contributor License Agreement and community requirements.
+Those instructions describe the upstream project's process; this fork is
+maintained independently.

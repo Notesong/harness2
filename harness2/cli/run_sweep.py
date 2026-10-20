@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -41,6 +42,7 @@ from pathlib import Path
 from .. import config
 from ..core import schedule
 from ..core.proposer import Proposer
+from ..local_models import profile_identity, validate_api_base_url
 from . import _common as C
 
 
@@ -208,6 +210,12 @@ def _main(args: argparse.Namespace) -> int:
 
 def _check_identity(adapter, args, namespace_dir: Path) -> None:
     """Prevent a resumed run or library from silently mixing models or task partitions."""
+    for endpoint in (
+        config.JB_JUDGE_API_BASE,
+        config.CODEX_BASE_URL if args.substrate == "cx" else "",
+    ):
+        if endpoint:
+            validate_api_base_url(endpoint)
     identity = {
         "method_version": config.METHOD_VERSION,
         "executor": config.SOLVER_MODEL_OC if args.substrate == "oc" else config.SOLVER_MODEL_CX,
@@ -223,10 +231,17 @@ def _check_identity(adapter, args, namespace_dir: Path) -> None:
         "domains": sorted(_csv(args.only_domains)),
         "seed": args.seed,
     }
+    local = profile_identity(os.environ)
+    if local is not None:
+        identity["local_profile"] = local
+    from ..profile_runtime import snapshot_identity
+
+    if pinned := snapshot_identity(os.environ):
+        identity["profile"] = pinned
     namespace_dir.mkdir(parents=True, exist_ok=True)
     path = namespace_dir / "config.json"
     if path.is_file():
-        if json.loads(path.read_text()) != json.loads(json.dumps(identity)):
+        if json.loads(path.read_text(encoding="utf-8")) != json.loads(json.dumps(identity)):
             raise ValueError(
                 "This run directory belongs to different models or tasks. "
                 "Choose a new HARNESS2_RUNS_DIR for a new experiment."

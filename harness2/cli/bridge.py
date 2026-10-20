@@ -72,7 +72,7 @@ def main(argv=None):
     p.add_argument("--port", type=int, default=0, help="default: the saved port, else a free one")
     args = p.parse_args(argv)
 
-    litellm = Path(sys.executable).with_name("litellm")
+    litellm = Path(sys.executable).with_name(config.executable_name("litellm"))
     if not litellm.is_file():
         p.exit(1, "LiteLLM is not installed; run: uv pip install -e '.[render,bridge]'\n")
     if not config.VERTEX_PROJECT:

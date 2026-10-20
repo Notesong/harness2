@@ -26,8 +26,12 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from ..local_models import opencode_env
+from ..processes import remove_tree
+from ..processes import run as run_process
+
 JOBBENCH = Path(__file__).resolve().parents[1]
-TEMP_BASE = Path("/tmp/hevo_ws")
+TEMP_BASE = Path(tempfile.gettempdir()) / "hevo_ws"
 TRAJ_DIR_NAME = "model_traj"
 EVENT_PREFIX = '{"type":'
 
@@ -119,11 +123,10 @@ def _permission(workspace: Path) -> str:
         {
             "external_directory": {
                 "*": "deny",
-                "/tmp": "allow",
-                "/tmp/*": "allow",
-                "/tmp/**": "allow",
-                f"{TEMP_BASE}/*": "allow",
-                f"{workspace}/**": "allow",
+                Path(tempfile.gettempdir()).as_posix(): "allow",
+                f"{Path(tempfile.gettempdir()).as_posix()}/**": "allow",
+                f"{TEMP_BASE.as_posix()}/*": "allow",
+                f"{workspace.as_posix()}/**": "allow",
             }
         }
     )
@@ -131,14 +134,14 @@ def _permission(workspace: Path) -> str:
 
 def _reset_task(task_dir: Path, workspace: Path) -> None:
     """Restore a pristine task_folder and an empty output/ before a retry."""
-    shutil.rmtree(workspace / "task_folder", ignore_errors=True)
-    shutil.rmtree(workspace / "output", ignore_errors=True)
+    remove_tree(workspace / "task_folder")
+    remove_tree(workspace / "output")
     shutil.copytree(task_dir, workspace / "task_folder")
     (workspace / "output").mkdir(parents=True, exist_ok=True)
 
 
 def _stage(task_dir: Path, render_dir: Path, workspace: Path) -> None:
-    shutil.rmtree(workspace, ignore_errors=True)
+    remove_tree(workspace)
     (workspace / "output").mkdir(parents=True)
     shutil.copytree(task_dir, workspace / "task_folder")
     shutil.copytree(render_dir / ".opencode", workspace / ".opencode")
@@ -150,9 +153,6 @@ def _stage(task_dir: Path, render_dir: Path, workspace: Path) -> None:
 
 def _command(cfg: Settings, workspace: Path, prompt: str, title: str) -> list[str]:
     cmd = [
-        "timeout",
-        "--kill-after=30s",
-        cfg.timeout_per_task,
         "bun",
         "run",
         "--cwd",
@@ -193,13 +193,19 @@ def _attempt(
     handle, raw = tempfile.mkstemp(prefix=f".{task_name}_a{attempt}.stdout.", dir=traj_file.parent)
     os.close(handle)
     with open(raw, "w", encoding="utf-8") as out, log_file.open("a", encoding="utf-8") as err:
-        code = subprocess.run(
-            _command(cfg, workspace, prompt, title),
-            cwd=cfg.opencode_dir,
-            env={**os.environ, "OPENCODE_PERMISSION": _permission(workspace)},
-            stdout=out,
-            stderr=err,
-        ).returncode
+        try:
+            code = run_process(
+                _command(cfg, workspace, prompt, title),
+                cwd=cfg.opencode_dir,
+                env=opencode_env({**os.environ, "OPENCODE_PERMISSION": _permission(workspace)},
+                                 model=cfg.model_id),
+                stdin=subprocess.DEVNULL,
+                stdout=out,
+                stderr=err,
+                timeout=float(cfg.timeout_per_task),
+            ).returncode
+        except subprocess.TimeoutExpired:
+            code = 124
     with open(raw, encoding="utf-8", errors="replace") as src:
         traj_file.write_text(
             "".join(ln for ln in src if ln.startswith(EVENT_PREFIX)), encoding="utf-8"
@@ -242,10 +248,13 @@ def run_one(cfg: Settings, task_id: str) -> bool:
         traj_file = traj_dir / f"{task_name}_{cfg.label}_attempt{attempt}_{_stamp()}.jsonl"
         _log(log_file, f"[{_hms()}] run {task_id} ({cfg.label}) attempt {attempt} -> {traj_file}")
         code = _attempt(cfg, workspace, traj_file, log_file, task_name, attempt)
-        if _nonempty(output_dir):
-            break
+        has_output = _nonempty(output_dir)
+        _log(log_file, f"[{_hms()}] finished {task_id} attempt {attempt}: "
+             f"exit={code} output={'present' if has_output else 'absent'}")
         if code in (124, 137):
             _log(log_file, f"[{_hms()}] TIMEOUT {task_id} attempt {attempt}")
+        if has_output:
+            break
 
     delivered = _nonempty(output_dir)
     if delivered:
@@ -256,7 +265,10 @@ def run_one(cfg: Settings, task_id: str) -> bool:
         _log(log_file, f"[{_hms()}] output -> {final_output_dir}")
     else:
         _log(log_file, f"[{_hms()}] NO OUTPUT for {task_id} ({cfg.label})")
-    shutil.rmtree(workspace, ignore_errors=True)
+    try:
+        remove_tree(workspace)
+    except OSError as exc:
+        _log(log_file, f"[{_hms()}] WARNING scratch cleanup failed for {workspace}: {exc}")
     return delivered and _nonempty(final_output_dir)
 
 

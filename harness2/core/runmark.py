@@ -23,9 +23,12 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
+import tempfile
 import time
 from pathlib import Path
+
+from harness2 import config
+from harness2.locking import atomic_replace
 
 MARK = ".adapt_complete"
 
@@ -44,14 +47,14 @@ def fingerprint(harness_dir: Path | None) -> str:
     """
     if harness_dir is None:
         return "base"
-    root = Path(harness_dir)
+    root = config.long_path(harness_dir)
     if not root.is_dir():
         return "absent"
     h = hashlib.sha1()
-    for p in sorted(root.rglob("*")):
+    for p in sorted(root.rglob("*"), key=lambda path: path.relative_to(root).as_posix()):
         if not p.is_file() or p.name == MARK or _ignored(p):
             continue
-        h.update(str(p.relative_to(root)).encode())
+        h.update(p.relative_to(root).as_posix().encode("utf-8"))
         h.update(b"\0")
         try:
             h.update(p.read_bytes())
@@ -65,7 +68,7 @@ def mark_complete(
     where: Path, *, run_id: str, harness_dir: Path | None = None, extra: dict | None = None
 ) -> Path:
     """Record that `run_id` finished. Call only after the runner returned normally."""
-    d = Path(where)
+    d = config.long_path(where)
     d.mkdir(parents=True, exist_ok=True)
     payload = {
         "version": VERSION,
@@ -74,16 +77,23 @@ def mark_complete(
         "harness": fingerprint(harness_dir),
         **(extra or {}),
     }
-    tmp = d / f"{MARK}.{os.getpid()}.tmp"
-    tmp.write_text(json.dumps(payload, indent=2, sort_keys=True))
+    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", newline="\n",
+                                     dir=d, prefix=f"{MARK}.", suffix=".tmp",
+                                     delete=False) as stream:
+        tmp = Path(stream.name)
+        json.dump(payload, stream, indent=2, sort_keys=True)
     final = d / MARK
-    os.replace(tmp, final)
-    return final
+    try:
+        atomic_replace(tmp, final)
+    finally:
+        tmp.unlink(missing_ok=True)
+    return Path(where) / MARK
 
 
 def read_mark(where: Path) -> dict | None:
     try:
-        return json.loads((Path(where) / MARK).read_text())
+        value = json.loads((config.long_path(where) / MARK).read_text(encoding="utf-8"))
+        return value if isinstance(value, dict) else None
     except Exception:
         return None
 

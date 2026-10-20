@@ -17,19 +17,31 @@ checkout at another revision.
   the upstream lock and adds Opus 4.8 adaptive-thinking support to the pinned
   provider adapter.
 - `job-bench-eval-judge.diff`: passes reasoning effort, raises the judge output
-  cap, and rejects empty completions.
+  cap, and rejects empty completions. This original API patch remains unchanged.
+- `job-bench-eval-native-lock.diff`: applies after the API patch and adds
+  self-contained stdlib Windows byte locking alongside POSIX `flock`. It preserves
+  grading, rubric, parsing, and extraction behavior. Setup applies and verifies both
+  patches independently, so fresh, API-only, and fully patched checkouts upgrade
+  idempotently without resetting files.
 - `harvey-labs-judge-vertex-anthropic.diff`: adds Claude and Gemini Vertex judges
   using ADC and improves malformed/ambiguous response handling.
 - `workbuddy-bench-runtime.diff`: registers the release's executor adapters,
   preserves declared harness mounts, refreshes short-lived credentials, and
   preserves Gemini thought signatures across tool calls. It also fixes an
-  undefined constant in the upstream Anthropic route support.
+  undefined constant in the upstream Anthropic route support. Windows host
+  support adds native file locking, credential-command quoting, dataset staging
+  without symlink privileges, and a copy fallback when resuming trials.
 
 Patches are checked before applying and skipped if already applied. Derived runner
-files belong in `harness2/third_party/{jb,lab,wb}_runner/`, which this copy does not
-include; setup copies the LAB and WorkBuddy overlays into the upstream checkouts.
+files belong in `third_party/{jb,lab,wb}_runner/` in a source checkout and are
+packaged under `harness2/third_party/` in wheels. Setup copies the LAB and
+WorkBuddy overlays into the upstream checkouts. JobBench uses native Python
+launchers; its original Codex shell launcher remains a reference asset.
 
-The upstream dependency locks are used for Python installations. OpenCode uses
+The upstream dependency locks are used for Python installations. Setup also adds
+`python-docx` for JobBench and `google-auth[requests]` for LAB without fixed
+versions; those supplementary resolutions are not pinned by the upstream locks.
+OpenCode uses
 Bun 1.3.11 and the patched lock. Codex uses the version in `config.CODEX_VERSION`.
 JobBench's Hugging Face revision is resolved once for a download and recorded in
 `dataset/main/.harness2-download.json`. WorkBuddy's dataset fetcher, as patched

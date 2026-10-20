@@ -6,8 +6,9 @@ benchmarks, see the [benchmark guides](BENCHMARKS.md).
 
 ## Requirements
 
-Use Linux and Python 3.12 for benchmark runs; the Python package also supports
-3.13. On Debian/Ubuntu:
+Use Windows or Linux and Python 3.12 for benchmark runs; the Python package also
+supports 3.13. Windows PowerShell commands and platform requirements are in the
+[Windows guide](WINDOWS.md). On Debian/Ubuntu:
 
 ```bash
 sudo apt-get update
@@ -18,14 +19,19 @@ Pandoc and Poppler are needed by LAB. Also install:
 
 - [Node.js](https://nodejs.org/en/download) 20 or newer.
 - [uv](https://docs.astral.sh/uv/getting-started/installation/).
-- [Google Cloud CLI](https://cloud.google.com/sdk/docs/install).
+- [Google Cloud CLI](https://cloud.google.com/sdk/docs/install) for Vertex AI.
 - [Docker Engine](https://docs.docker.com/engine/install/) for WorkBuddy-Bench,
-  with permission to run `docker info`.
+  with permission to run `docker info`. Windows uses Docker Desktop with its
+  Linux container engine.
 
 Benchmark setup installs its own pinned Bun runtime under `dependencies/`.
 Keep the main Harness² environment active when running the commands below.
 
 ## Models and credentials
+
+For a local llama.cpp model, follow the [local-model guide](LOCAL_MODELS.md).
+JobBench with OpenCode supports a complete local pipeline without Google Cloud
+credentials. The Vertex configuration below is a separate provider option.
 
 Copy `.env.example` to `.env` if you have not already done so. Set your Vertex AI
 project and model IDs, then authenticate:
@@ -45,8 +51,11 @@ to `global`. Your account must have access to each configured model.
 | `HARNESS2_JUDGE_MODEL` | Bare judge model ID; the adapter supplies the Vertex prefix |
 | `HARNESS2_RUNS_DIR` | Output root; defaults to `runs/` |
 
-The provided configuration uses Vertex Gemini executors and judges, and supports
-either Vertex Claude or Gemini as the improver. LAB also supports the upstream
+The template leaves model IDs blank; it does not select a cloud model
+automatically. For the Vertex route described here, configure Gemini executors
+and judges, with either Vertex Claude or Gemini as the improver. The Google
+authentication steps apply to that route, not the local llama.cpp workflow.
+LAB also supports the upstream
 judge's direct providers when their credentials are configured. For WorkBuddy,
 setup generates the Gemini solver and judge routes from these settings; rerun
 setup after changing either model.
@@ -159,7 +168,7 @@ see [web access during evaluation](EXPERIMENTS.md#web-access).
 
 ## Wheel installations
 
-A wheel ships the `harness2` package only. The task partitioner,
+A wheel includes the `harness2` package and bundled runner assets. The task partitioner,
 `python scripts/split_tasks.py`, requires this source tree. For a wheel
 installation, work from a dedicated directory: `.env`, `dependencies/`, and
 `runs/` are resolved there.

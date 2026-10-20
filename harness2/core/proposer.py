@@ -34,6 +34,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .. import config
+from ..local_models import opencode_env
+from ..processes import run as run_process
 from .spec import ChannelSpec
 
 SYSTEM_ARG_MAX = 120_000
@@ -230,12 +232,13 @@ class Proposer:
                 ]
             else:
                 cmd += ["--append-system-prompt", system]
-        p = subprocess.run(
-            cmd,
+        p = run_process(
+            config.command(cmd),
             input=stdin,
             cwd=cwd,
             env=self.env(),
             text=True,
+            encoding="utf-8",
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             timeout=wall,
@@ -268,10 +271,17 @@ class Proposer:
 
         env = self.env()
         env["OPENCODE_PERMISSION"] = json.dumps(
-            {"external_directory": {"*": "deny", str(cwd): "allow", f"{cwd}/**": "allow"}}
+            {
+                "external_directory": {
+                    "*": "deny",
+                    cwd.as_posix(): "allow",
+                    f"{cwd.as_posix()}/**": "allow",
+                }
+            }
         )
         env["XDG_DATA_HOME"] = str(cwd / ".ocdata")
         env["XDG_STATE_HOME"] = str(cwd / ".ocstate")
+        env = opencode_env(env, model=self.spec.model)
 
         cmd = [
             str(config.BUN),
@@ -291,19 +301,20 @@ class Proposer:
         ]
         if self.spec.effort:
             cmd += ["--variant", self.spec.effort]
-        p = subprocess.run(
+        p = run_process(
             cmd,
             cwd=cwd,
             env=env,
             text=True,
+            encoding="utf-8",
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             timeout=wall,
         )
         cost = _opencode_cost(p.stdout)
         ans = out / "answer.md"
-        if ans.is_file() and ans.read_text(errors="replace").strip():
-            return ans.read_text(errors="replace"), cost, ""
+        if ans.is_file() and ans.read_text(errors="replace", encoding="utf-8").strip():
+            return ans.read_text(errors="replace", encoding="utf-8"), cost, ""
         text, err = _opencode_stdout(p.stdout)
         if text.strip():
             return text, cost, ""
@@ -522,7 +533,7 @@ def _call_fingerprint(label: str, mission: str, system: str, context_dir: Path |
             for p in sorted(root.rglob("*")):
                 if not p.is_file() or "__pycache__" in p.parts:
                     continue
-                h.update(str(p.relative_to(root)).encode("utf-8", errors="replace"))
+                h.update(p.relative_to(root).as_posix().encode("utf-8", errors="replace"))
                 h.update(b"\0")
                 try:
                     with p.open("rb") as fh:
