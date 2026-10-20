@@ -154,6 +154,13 @@ def configuration_environment(environment: Mapping[str, str], snapshot: dict) ->
 def verify_configuration(snapshot: dict, environment: Mapping[str, str]) -> None:
     """Detect a different GGUF or executable behind an unchanged model alias."""
     identity = snapshot.get("identity", {})
+    recorded_cpu = identity.get("managed_cpu")
+    if recorded_cpu is not None:
+        from .local_server import managed_cpu_budget
+
+        if (environment.get("HARNESS2_LOCAL_RUNTIME") != "managed"
+                or recorded_cpu != managed_cpu_budget()):
+            raise ValueError("The managed CPU thread recipe changed. Capture a new configuration.")
     tools = identity.get("tools", {})
     declared_policy = tools.get("declared_configuration_sha256")
     if "declared_configuration_sha256" in tools:

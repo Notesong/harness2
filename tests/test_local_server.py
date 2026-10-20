@@ -239,6 +239,9 @@ class ManagedLocalServerTests(unittest.TestCase):
                 token = manager.environment["HARNESS2_LOCAL_API_KEY"]
                 self.assertEqual(manager.environment["HARNESS2_JUDGE_API_KEY"], token)
                 self.assertNotIn(token, json.dumps(manager.metadata))
+                self.assertEqual(manager.metadata["managed_cpu"], {
+                    "generation_threads": 8, "prompt_threads": 8,
+                })
                 self.assertGreater(len(token), 30)
                 self.assertTrue(manager.started)
                 self.assertTrue(process_alive(manager.pid))
@@ -249,6 +252,7 @@ class ManagedLocalServerTests(unittest.TestCase):
                 self.assertEqual([key for key in options["env"] if key.startswith("LLAMA_")],
                                  ["LLAMA_API_KEY"])
                 for option, value in (("--ctx-size", "16384"), ("--parallel", "1"),
+                                      ("--threads", "8"), ("--threads-batch", "8"),
                                       ("--host", "127.0.0.1"), ("--cache-type-k", "q8_0"),
                                       ("--cache-type-v", "q8_0"), ("--flash-attn", "on"),
                                       ("--fit", "on"), ("--fit-target", "1536"),

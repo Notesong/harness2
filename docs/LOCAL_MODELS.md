@@ -28,6 +28,14 @@ managed endpoint must use `http://127.0.0.1:PORT/v1`. Its port must be
 free: managed startup refuses an occupied endpoint and never stops its existing
 server. Choose **external** mode to use a server that you manage yourself.
 
+The managed recipe uses eight CPU worker threads for generation and eight for
+prompt processing, rather than letting llama.cpp select every physical core.
+This budget applies to both standalone conversations and experiments; runtime
+and GPU driver helper threads are additional. GPU placement settings stay the same.
+New configuration captures and startup records include this policy. Older
+configuration snapshots retain their unknown thread settings. Changes take
+effect when Studio and its managed model server are next started.
+
 Run the full local JobBench workflow through Studio, or use:
 
 ```powershell

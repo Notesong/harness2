@@ -43,6 +43,7 @@ class ConfigurationCaptureTests(unittest.TestCase):
             self.assertEqual(identity[name]["size_bytes"], path.stat().st_size)
             self.assertEqual(identity[name]["status"], "hashed")
         self.assertEqual(identity["budgets"], {"context": 65536, "output": 8192})
+        self.assertEqual(identity["managed_cpu"], {"generation_threads": 8, "prompt_threads": 8})
         self.assertEqual(identity["roles"], {"solver": "local/fixture-local-64k",
                                             "improver": "local/fixture-local-64k",
                                             "judge": "fixture-local-64k"})
@@ -68,6 +69,7 @@ class ConfigurationCaptureTests(unittest.TestCase):
         self.assertIsNone(captured["identity"]["weights"]["sha256"])
         self.assertIsNone(captured["identity"]["runtime"]["version"])
         self.assertIsNone(captured["identity"]["reasoning"]["mode"])
+        self.assertIsNone(captured["identity"]["managed_cpu"])
         self.assertIsNone(captured["identity"]["tools"]["policy"])
 
     def test_file_mutation_during_hash_does_not_publish_a_false_fingerprint(self):

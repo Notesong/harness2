@@ -298,6 +298,8 @@ def capture_configuration(environment: Mapping[str, str]) -> dict:
         for role in ("solver", "improver", "judge"):
             settings[role] = resolved.get(SETTING_ENV[role], "")
     managed = settings["provider"] == "local" and settings["local_runtime"] == "managed"
+    from .local_server import managed_cpu_budget
+
     weights = _fingerprint(settings["local_weights"])
     weights["annotation"] = _annotation(settings["local_weights"])
     runtime = _fingerprint(settings["local_executable"])
@@ -311,6 +313,7 @@ def capture_configuration(environment: Mapping[str, str]) -> dict:
         "roles": {role: settings[role] or None for role in ("solver", "improver", "judge")},
         "budgets": {"context": local.context if local else None,
                     "output": local.output if local else None},
+        "managed_cpu": managed_cpu_budget() if managed else None,
         "reasoning": {"mode": "off" if managed else None,
                       "source": "managed llama.cpp startup recipe" if managed else
                       "unknown; the external provider was not inspected"},

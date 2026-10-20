@@ -23,7 +23,7 @@ from ..conversation_runtime import (
 )
 from ..conversations import ConversationStore
 from ..local_models import profile
-from ..local_server import ManagedLocalServer
+from ..local_server import ManagedLocalServer, managed_cpu_budget
 from ..locking import atomic_replace
 from ..profile_runtime import (
     MAX_SNAPSHOT,
@@ -293,6 +293,10 @@ class Conversations:
                 idle.model = owner
             self._check_stopped(idle)
             owner.start()
+            if environment.get("HARNESS2_LOCAL_RUNTIME") == "managed":
+                self.store.record_event(idle.identifier, "managed_model_started", {
+                    "managed_cpu": managed_cpu_budget(), "context": local.context,
+                })
             self._check_stopped(idle)
             bridge = SessionBridge(self.workspace.root, idle.identifier, idle.workspace, owner.environment,
                 model=local.opencode_model, label=idle.label, resume_session_id=idle.resume_session_id,

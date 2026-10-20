@@ -21,7 +21,7 @@ from pathlib import Path
 
 from .. import config, processes
 from ..local_models import profile, profile_defaults
-from ..local_server import ManagedLocalServer
+from ..local_server import ManagedLocalServer, managed_cpu_budget
 from ..locking import file_lock
 from ..run_story import append_event, build_story, deterministic_story, write_story
 from . import _common as C
@@ -194,10 +194,12 @@ def _run(args: argparse.Namespace) -> int:
                 "model",
             )
             runtime.start()
+            cpu = managed_cpu_budget()
             append_event(
                 output,
                 "Model runtime prepared",
-                "The managed model is ready."
+                f"The managed model is ready: {cpu['generation_threads']} generation threads "
+                f"and {cpu['prompt_threads']} prompt-processing threads."
                 if environment.get("HARNESS2_LOCAL_RUNTIME") == "managed"
                 else "Using the configured external endpoint; its lifecycle remains external.",
                 "model",

@@ -24,6 +24,13 @@ from urllib.parse import urlsplit
 from . import config, processes
 from .local_models import LocalProfile, profile
 
+MANAGED_CPU_THREADS = 8
+
+
+def managed_cpu_budget() -> dict[str, int]:
+    """The owned recipe's CPU worker budget, excluding runtime/helper threads."""
+    return {"generation_threads": MANAGED_CPU_THREADS, "prompt_threads": MANAGED_CPU_THREADS}
+
 
 @dataclass(frozen=True)
 class ManagedSettings:
@@ -110,7 +117,8 @@ class ManagedLocalServer:
                 "owned": self._process is not None and not self._closed,
                 "model": local.model if local else None,
                 "base_url": local.base_url if local else None,
-                "context": local.context if local else None}
+                "context": local.context if local else None,
+                "managed_cpu": managed_cpu_budget() if local else None}
 
     def __enter__(self) -> ManagedLocalServer:
         return self.start()
@@ -155,6 +163,8 @@ class ManagedLocalServer:
                     "--host", "127.0.0.1", "--port", str(settings.port),
                     "--alias", settings.profile.model,
                     "--ctx-size", str(settings.profile.context), "--parallel", "1",
+                    "--threads", str(MANAGED_CPU_THREADS),
+                    "--threads-batch", str(MANAGED_CPU_THREADS),
                     "--cache-type-k", "q8_0", "--cache-type-v", "q8_0",
                     "--flash-attn", "on", "--fit", "on", "--fit-target", "1536",
                     "--batch-size", "512", "--ubatch-size", "128",

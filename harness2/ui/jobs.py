@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .. import config, processes
-from ..local_server import ManagedLocalServer
+from ..local_server import ManagedLocalServer, managed_cpu_budget
 from .workspace import BENCHMARKS, Workspace
 
 ACTIVE = {"running", "starting"}
@@ -555,7 +555,8 @@ class JobManager:
                         secret_values.append(runtime_key)
                     with self.lock:
                         record["local_server"] = {
-                            "status": "running", "pid": model_server.pid
+                            "status": "running", "pid": model_server.pid,
+                            "managed_cpu": managed_cpu_budget(),
                         }
                         self._write(record)
                     log.write("Local model ready; it will unload after this operation.\n")

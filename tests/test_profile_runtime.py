@@ -234,6 +234,18 @@ class ProfileRuntimeTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "runtime"):
             verify_configuration(snapshot, environment)
 
+    def test_recorded_managed_cpu_budget_rejects_recipe_drift(self):
+        snapshot = copy.deepcopy(self.configuration["snapshot"])
+        snapshot["settings"]["local_runtime"] = "managed"
+        snapshot["identity"]["managed_cpu"] = {"generation_threads": 8, "prompt_threads": 8}
+        environment = configuration_environment({}, snapshot)
+        verify_configuration(snapshot, environment)
+        snapshot["identity"]["managed_cpu"]["generation_threads"] = 20
+        with self.assertRaisesRegex(ValueError, "CPU thread recipe"):
+            verify_configuration(snapshot, environment)
+        del snapshot["identity"]["managed_cpu"]
+        verify_configuration(snapshot, environment)  # Legacy thread settings remain unknown.
+
     def test_declared_tool_policy_rejects_changes_but_allows_authentication_rotation(self):
         policy = {"provider": {"local": {"options": {"apiKey": "first-private-value"}}},
                   "tools": {"webfetch": False}, "permission": {"bash": "deny"}}
