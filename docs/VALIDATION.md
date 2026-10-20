@@ -513,6 +513,69 @@ calls, and no failures; resume added zero executions or editor calls. These
 checks made no model calls and did not modify Owen. The initial proof wrapper's
 CP1252 output decoding assumption and corrected rerun are retained locally.
 
+### Conversational sidecar validation boundaries
+
+The final Windows suite before the platform gate passed **342 tests** (two
+platform-specific skips), and **39 Node view tests** passed. A subsequent policy
+check restricts conversation-enabled benchmark runs to Windows: POSIX phase
+cancellation does not contain the bridge's separate native process groups.
+This is an explicit support limit, not a claim established by mocked owners.
+
+A fresh offline wheel install verified 64 Python modules, three UI assets,
+50 third-party files, 48 asset checksums, and eight license files against the
+source. Installed conversation creation/listing and separate archives worked
+without loading a model. The deterministic two-task demo completed with no
+failures; resume added no executions or editor calls. The final wheel SHA256
+was `e0677d47a55cb8a6aae8eeabe1a41fc1aef898d958075fdcb7603aa8cf3c3793`;
+the local source-manifest and reports are in `.tmp/conversations-wheel-proof/`.
+
+The conversation UI fixtures exercise save-only creation, deliberate start,
+active-worker delivery, visible message states and reasons, native-context
+switches, source links, draft preservation, optional run gating, and protection
+against an older poll replacing a newer message result. They execute production
+view functions with a small DOM substitute and substituted HTTP responses. They
+do not start OpenCode or a model, prove delivery to a real native session, or
+establish successful recovery after compaction.
+
+Conversation history, working continuity, reserved conversational memory, and
+technical profiles are separate stores. Recording human contact or a sourced
+decision is not evidence of improved task performance. Earlier completed
+JobBench runs and model lifecycle proofs predate this sidecar; they do not
+validate live conversational behavior. Actual native-session and model-backed
+checks must be reported separately from these UI fixtures.
+
+The **11 native Windows transport tests** use real Python HTTP child processes
+in place of OpenCode. They exercise authenticated loopback requests, confirmed
+native message IDs, bounded public projections, exact-session resume, model and
+session override rejection, startup cancellation, and owned cleanup, including
+private runtime files beyond Windows's traditional path limit. They do not run
+the OpenCode plugin or model inference.
+
+A separate local proof ran the actual pinned Bun/OpenCode server, attached CLI,
+and conversation plugin against a **scripted local model API**. Its six API calls
+exercised the real `SessionBridge` monitor and archive acknowledgements for a
+public message, a decision citing the delivered human message's ledger ID, and a
+checkpoint referencing that decision. A human message arrived while the original
+working session was busy. The proof also forced native compaction, observed the
+recovery hook and archived event, then closed and reopened the exact retained
+session. This is transport/plugin integration evidence; the responses were
+scripted. The local record is
+`.tmp/native-session-proof-20261019-222233/report.json`, which includes the tested
+transport source hash.
+
+A bounded **real Qwen 27B conversation check** then exercised the Studio
+`Conversations` service with a disposable profile, an empty harness, and a copy
+of Owen's managed runtime recipe: 65,536 context tokens and a 512-token output
+ceiling. Qwen acknowledged `copper lantern 47`; after Stop unloaded both owned
+processes, Continue reopened the same native session and Qwen recalled that
+phrase. Both load/response/unload cycles completed in **119.9 seconds**. Original
+native process handles confirmed all four owned model/session processes had
+terminated, no llama.cpp process remained, and Owen's archived JSON hashes were
+unchanged. The local report and visible conversation are retained under
+`.tmp/cp-222310/`. This two-message check did not exercise a conversational
+JobBench workflow, model-written decision/checkpoint records, model-backed
+compaction, or any improvement in task performance.
+
 From the checkout, with its development virtual environment installed:
 
 ```powershell
@@ -522,7 +585,7 @@ New-Item -ItemType Directory -Force $env:TEMP | Out-Null
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 .\.venv\Scripts\python.exe scripts/check_provenance.py
 .\.venv\Scripts\ruff.exe check harness2 tests scripts
-node --test tests/ui_story.test.cjs tests/profile_ui.test.cjs tests/capability_ui.test.cjs
+node --test tests/ui_story.test.cjs tests/profile_ui.test.cjs tests/capability_ui.test.cjs tests/conversation_ui.test.cjs
 .\.venv\Scripts\python.exe -m pip wheel --no-index --no-deps --no-build-isolation --wheel-dir dist .
 .\.venv\Scripts\python.exe -m venv .test-tmp\wheel-check
 .\.test-tmp\wheel-check\Scripts\python.exe -m pip install --no-index --no-deps dist\harness2-0.1.0-py3-none-any.whl

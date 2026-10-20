@@ -3,7 +3,7 @@
 (() => {
   const $ = (selector) => document.querySelector(selector);
   const $$ = (selector) => [...document.querySelectorAll(selector)];
-  const views = { overview: "Home", new: "New experiment", profiles: "Profiles", capabilities: "Capabilities", runs: "Runs", setup: "Setup" };
+  const views = { overview: "Home", new: "New experiment", profiles: "Profiles", conversations: "Conversations", capabilities: "Capabilities", runs: "Runs", setup: "Setup" };
   const statusLabels = { starting: "Starting", running: "Running", succeeded: "Complete", failed: "Failed", partial: "Needs attention", exception: "Failed", cancelled: "Stopped", interrupted: "Interrupted", pending: "Waiting", completed: "Complete", complete: "Complete", skipped: "Skipped" };
   const kindLabels = { demo: "Free demo", benchmark: "Experiment", check: "Environment check", setup: "Benchmark setup", preview: "Experiment plan", judge: "Evaluation", report: "Report", authenticate: "Authentication" };
   const settingsFields = { local_url: "local-url", local_model: "local-model", local_context: "local-context", local_output: "local-output", local_runtime: "local-runtime", local_executable: "local-executable", local_weights: "local-weights", project: "project", region: "region", solver: "solver", improver: "improver", judge: "judge", codex_url: "codex-url", codex_model: "codex-model" };
@@ -45,6 +45,14 @@
   let capabilityDetailSignature = "";
   let capabilityLoadingId = null;
   let capabilityBusy = false;
+  const conversationCache = new Map();
+  const conversationDrafts = new Map();
+  let selectedConversationId = null;
+  let conversationListSignature = "";
+  let conversationDetailSignature = "";
+  let conversationLoading = false;
+  let conversationBusy = false;
+  const conversationVersions = new Map();
 
   function remember(key, value) { try { sessionStorage.setItem(key, value); } catch (_) { /* Session storage can be disabled. */ } }
   function recalled(key) { try { return sessionStorage.getItem(key); } catch (_) { return null; } }
@@ -58,6 +66,7 @@
   }
   selectedId = recalled("harness2_selected_job");
   selectedProfileId = recalled("harness2_selected_profile");
+  selectedConversationId = recalled("harness2_selected_conversation");
 
   function element(tag, className, text) {
     const result = document.createElement(tag);
@@ -144,6 +153,7 @@
       if (changed && selectedProfileId && profileLoadingId !== selectedProfileId) loadProfile(selectedProfileId, { force: true });
     }
     if (next === "capabilities") renderCapabilities();
+    if (next === "conversations") { renderConversations(); loadConversation(); }
   }
 
   function providerLabel(settings = state?.settings) {
@@ -267,6 +277,7 @@
     const localNote = $("#local-profile-note");
     localNote.hidden = experimentSettings()?.provider !== "local";
     localNote.textContent = localProfileProblem({ benchmark: benchmark?.id?.startsWith("wb-") ? "wb" : benchmark?.id, substrate: $("#substrate").value }) || "The complete local pipeline supports JobBench with OpenCode. Other benchmarks and runners need additional configuration.";
+    renderConversationOption();
   }
   function formParams() {
     if (!$("#experiment-form").reportValidity()) return null;
@@ -281,7 +292,8 @@
       toast("Choose this run’s configuration and harness from the profile before starting.", true);
       return null;
     }
-    return { ...benchmarkParams(id), substrate: $("#substrate").value, k: Number($("#branches").value), mode: $("#mode").value, domains: [$("#domain").value], max_tasks: Number($("#max-tasks").value), workers: Number($("#workers").value), pipeline: true, ...(profileId ? { profile_id: profileId, profile_configuration_id: configurationId, profile_revision_id: revisionId } : {}) };
+    if ($("#experiment-conversation").checked && !conversationOptionAllowed()) { toast("Conversation during work needs a local profile, JobBench with OpenCode, and one domain worker.", true); return null; }
+    return { ...benchmarkParams(id), substrate: $("#substrate").value, k: Number($("#branches").value), mode: $("#mode").value, domains: [$("#domain").value], max_tasks: Number($("#max-tasks").value), workers: Number($("#workers").value), pipeline: true, ...(profileId ? { profile_id: profileId, profile_configuration_id: configurationId, profile_revision_id: revisionId } : {}), ...($("#experiment-conversation").checked ? { conversation_enabled: true } : {}) };
   }
 
   function renderRecent() {
@@ -593,7 +605,12 @@
       renderExperimentProfile();
       showView("new");
     }, "button primary small");
-    heading.append(title, start);
+    const actions = element("div", "profile-heading-actions");
+    const talk = profileButton(`Talk to ${profile.name}`, () => talkToProfile(profile), "button secondary small");
+    talk.disabled = !profile.active_configuration_id || !profile.active_revision_id || conversationBusy;
+    talk.title = "Creates a conversation and loads its selected local model. Stop the conversation to release its owned model.";
+    actions.append(start, talk, element("small", "field-help", "Talk loads the saved local model and opens its working session."));
+    heading.append(title, actions);
     const note = element("p", "profile-continuity-note", "Experiments take a recorded snapshot. Changing the active configuration or harness affects future runs; the history stays intact.");
     const configurations = renderProfileConfigurations(profile);
     const revisions = renderProfileRevisions(profile);
@@ -942,7 +959,7 @@
       $("#job-detail-content").append(wrap);
     }
     const profiles = state?.profiles || [];
-    const signature = JSON.stringify([job.id, job.status, profiles, job.profile || job.profile_plan || job.profile_binding || job.params, job.capability_catalog]);
+    const signature = JSON.stringify([job.id, job.status, profiles, job.profile || job.profile_plan || job.profile_binding || job.params, job.capability_catalog, job.conversation_id, job.conversation]);
     if (!force && signature === runProfileSignature) return;
     runProfileSignature = signature;
     wrap.replaceChildren();
@@ -970,6 +987,13 @@
         }
       }
       if (profileId) info.append(profileButton("Open profile ancestry →", () => selectProfile(profileId), "text-button"));
+      if (job.conversation_id) info.append(conversationButton("Open this run’s conversation →", () => selectConversation(job.conversation_id), "text-button"), element("p", "field-help", "Human contact is recorded as context, not proof of benefit."));
+      if (job.conversation) {
+        const confirmed = Number(job.conversation.human_messages_delivered) || 0;
+        info.append(element("p", "field-help", `${counted(confirmed, "human message")} confirmed delivered to the native session.`));
+        const unconfirmed = Number(job.conversation.human_delivery_unconfirmed) || 0;
+        if (unconfirmed || (job.conversation.human_contact_possible && !confirmed)) info.append(element("p", "notice", `${unconfirmed ? counted(unconfirmed, "message delivery", "message deliveries") : "Message delivery"} unconfirmed. Human contact may have occurred; this run cannot be treated as having no human contact.`));
+      }
       wrap.append(info);
     }
     if (job.kind !== "benchmark" || !["succeeded", "partial"].includes(job.status) || !profiles.length) return;
@@ -1005,6 +1029,241 @@
     details.append(form);
     wrap.append(details);
   }
+  function conversationOptionAllowed() {
+    if (state.features?.conversation_runs === false) return false;
+    return Boolean($("#experiment-profile").value && experimentProfile() && experimentSettings()?.provider === "local" && $("#benchmark").value === "jb" && $("#substrate").value === "oc" && Number($("#workers").value) === 1);
+  }
+  function renderConversationOption() {
+    let checkbox = $("#experiment-conversation");
+    if (!checkbox) {
+      const control = element("div", "experiment-conversation-control");
+      const label = element("label", "profile-checkbox");
+      checkbox = element("input");
+      checkbox.id = "experiment-conversation";
+      checkbox.type = "checkbox";
+      label.append(checkbox, element("span", "", "Conversation during work"));
+      const help = element("p", "field-help");
+      help.id = "experiment-conversation-help";
+      control.append(label, help);
+      $("#experiment-profile-control").append(control);
+    }
+    checkbox.disabled = !conversationOptionAllowed();
+    if (checkbox.disabled) checkbox.checked = false;
+    text("#experiment-conversation-help", state.features?.conversation_runs === false ? "Conversation during work currently requires Windows process containment. Saved conversations and standalone profile chat remain available." : checkbox.disabled ? "Choose a local profile, JobBench with OpenCode, and one domain worker to enable a conversation." : "Optional and off by default. Messages go to the active native worker during this run. Human contact is recorded, without assuming that it helps.");
+  }
+  function conversationButton(label, action, className = "button secondary small") {
+    const button = element("button", className, label);
+    button.type = "button";
+    button.disabled = conversationBusy;
+    button.addEventListener("click", action);
+    return button;
+  }
+  function cacheConversation(result) {
+    const conversation = result.conversation || result;
+    if (!conversation?.id) throw new Error("This conversation could not be read.");
+    conversationCache.set(conversation.id, conversation);
+    if (state) state.conversations = [{ id: conversation.id, profile_id: conversation.profile_id, title: conversation.title, run_id: conversation.run_id, status: conversation.status, active_worker_id: conversation.active_worker_id, message_count: conversation.messages?.length || 0, pending_count: conversation.pending_count ?? (conversation.messages || []).filter((item) => ["queued", "delivered"].includes(item.status)).length, runtime: conversation.runtime }, ...(state.conversations || []).filter((item) => item.id !== conversation.id)];
+    return conversation;
+  }
+  function selectConversation(id) {
+    if (selectedConversationId) conversationDrafts.set(selectedConversationId, $("#conversation-draft").value);
+    selectedConversationId = id;
+    remember("harness2_selected_conversation", id);
+    $("#conversation-draft").value = conversationDrafts.get(id) || "";
+    conversationDetailSignature = "";
+    showView("conversations");
+  }
+  async function loadConversation() {
+    const id = selectedConversationId;
+    if (view !== "conversations" || !id || conversationLoading === id || appClosed) return;
+    conversationLoading = id;
+    const version = conversationVersions.get(id) || 0;
+    try {
+      const result = await api(`/api/conversations/${encodeURIComponent(id)}`);
+      if ((conversationVersions.get(id) || 0) !== version) return;
+      const conversation = cacheConversation(result);
+      if (selectedConversationId === id && view === "conversations") renderConversationDetail(conversation);
+    } catch (error) {
+      if (selectedConversationId === id && view === "conversations") text("#conversation-runtime", error.message);
+    } finally { if (conversationLoading === id) conversationLoading = false; }
+  }
+  async function conversationAction(id, operation, body = {}) {
+    if (conversationBusy) return null;
+    conversationVersions.set(id, (conversationVersions.get(id) || 0) + 1);
+    conversationBusy = true;
+    updateConversationComposer(conversationCache.get(selectedConversationId));
+    try {
+      const conversation = cacheConversation(await api(`/api/conversations/${encodeURIComponent(id)}/${operation}`, { method: "POST", body }));
+      conversationDetailSignature = "";
+      renderConversations();
+      return conversation;
+    } catch (error) { toast(error.message, true); return null; }
+    finally {
+      conversationBusy = false;
+      conversationDetailSignature = "";
+      renderConversations();
+    }
+  }
+  async function createConversation(profileId, { start = false, configurationId, revisionId, title } = {}) {
+    if (conversationBusy || !profileId) return null;
+    conversationBusy = true;
+    $("#conversation-create").disabled = true;
+    let conversation;
+    try {
+      conversation = cacheConversation(await api("/api/conversations", { method: "POST", body: { profile_id: profileId, ...(configurationId ? { configuration_id: configurationId } : {}), ...(revisionId ? { revision_id: revisionId } : {}), ...(title ? { title } : {}) } }));
+      selectConversation(conversation.id);
+    } catch (error) { toast(error.message, true); }
+    finally { conversationBusy = false; $("#conversation-create").disabled = false; }
+    if (conversation && start) await conversationAction(conversation.id, "start");
+    else renderConversations();
+    return conversation || null;
+  }
+  function talkToProfile(profile) {
+    return createConversation(profile.id, { start: true, configurationId: profile.active_configuration_id, revisionId: profile.active_revision_id });
+  }
+  function activeConversationWorker(conversation) {
+    return conversation?.status === "open" ? conversation.workers?.find((worker) => worker.id === conversation.active_worker_id && worker.status === "active") : null;
+  }
+  function updateConversationComposer(conversation) {
+    const allowed = Boolean(activeConversationWorker(conversation)) && conversation?.runtime?.can_message !== false && !conversationBusy && !appClosed;
+    $("#conversation-draft").disabled = !allowed;
+    $("#conversation-send").disabled = !allowed;
+    text("#conversation-compose-help", !conversation ? "Choose a conversation to begin." : allowed ? "Delivered to the active worker in its native context. Ctrl+Enter sends; Enter starts a new line." : conversationBusy ? "Saving this request… Your draft stays here." : "No active worker is available. Start or continue the conversation explicitly; a saved draft stays here.");
+  }
+  async function sendConversationMessage(event) {
+    event?.preventDefault();
+    const id = selectedConversationId;
+    const conversation = conversationCache.get(id);
+    const draft = $("#conversation-draft").value;
+    if (!activeConversationWorker(conversation) || conversation?.runtime?.can_message === false || conversationBusy || !draft.trim()) return;
+    conversationDrafts.set(id, draft);
+    const result = await conversationAction(id, "messages", { text: draft });
+    if (result && conversationDrafts.get(id) === draft) {
+      conversationDrafts.set(id, "");
+      if (selectedConversationId === id && $("#conversation-draft").value === draft) $("#conversation-draft").value = "";
+    }
+  }
+  function renderConversations() {
+    if (!state || view !== "conversations") return;
+    const conversations = state.conversations || [];
+    const profiles = state.profiles || [];
+    const signature = JSON.stringify([conversations, profiles, selectedConversationId]);
+    if (signature !== conversationListSignature) {
+      conversationListSignature = signature;
+      const list = $("#conversation-list");
+      list.replaceChildren(...conversations.map((conversation) => {
+        const button = conversationButton(conversation.title, () => selectConversation(conversation.id), `conversation-list-item${selectedConversationId === conversation.id ? " selected" : ""}`);
+        const name = profiles.find((profile) => profile.id === conversation.profile_id)?.name || conversation.profile_id;
+        button.replaceChildren(element("strong", "", conversation.title || "Conversation"), element("small", "", `${name} · ${counted(conversation.message_count || 0, "message")}`), element("small", "", conversation.pending_count ? `${count(conversation.pending_count)} queued · ${human(conversation.runtime?.status || conversation.status)}` : human(conversation.runtime?.status || conversation.status)));
+        if (selectedConversationId === conversation.id) button.setAttribute("aria-current", "true");
+        return button;
+      }));
+      if (!conversations.length) list.append(element("p", "field-help", "Conversations will stay here after the model is unloaded."));
+      const select = $("#conversation-profile");
+      const previous = select.value;
+      select.replaceChildren(...profiles.map((profile) => { const option = element("option", "", profile.name); option.value = profile.id; return option; }));
+      select.value = profiles.some((profile) => profile.id === previous) ? previous : profiles[0]?.id || "";
+      $("#conversation-create").disabled = !profiles.length || conversationBusy;
+    }
+    const conversation = conversationCache.get(selectedConversationId);
+    if (conversation) renderConversationDetail(conversation);
+    else {
+      $("#conversation-heading").replaceChildren(empty("A little room to talk.", "Choose a conversation or create one. Opening this screen does not load a model.", true));
+      $("#conversation-messages").replaceChildren();
+      $("#conversation-runtime").replaceChildren();
+      $("#conversation-recovery").replaceChildren(element("p", "field-help", "No working context selected."));
+      $("#conversation-decisions").replaceChildren();
+      updateConversationComposer(null);
+    }
+  }
+  function renderConversationDetail(conversation) {
+    if (conversation.id !== selectedConversationId) return;
+    updateConversationComposer(conversation);
+    const runId = conversation.runtime?.job_id || conversation.run_id;
+    const run = (state?.jobs || []).find((job) => job.id === runId);
+    const signature = JSON.stringify([conversation, run?.status, conversationBusy]);
+    if (signature === conversationDetailSignature) return;
+    conversationDetailSignature = signature;
+    const worker = activeConversationWorker(conversation);
+    const runtime = conversation.runtime || { status: "offline" };
+    const heading = element("header", "conversation-heading");
+    const name = (state?.profiles || []).find((profile) => profile.id === conversation.profile_id)?.name || conversation.profile_id;
+    const title = element("div");
+    title.append(element("span", "eyebrow", `${name} / VISIBLE CONVERSATION`), element("h2", "", conversation.title || "Conversation"), element("p", "field-help", `Configuration ${conversation.configuration_id || "unrecorded"} · harness ${conversation.revision_id || "unrecorded"}`));
+    const actions = element("div", "conversation-actions");
+    const runActive = runtime.mode === "run" || Boolean(run && isActive(run.status));
+    if (runId) actions.append(conversationButton(runActive ? "Follow run / stop work ↗" : "Open associated run ↗", () => selectJob(runId)));
+    if (!worker && !runActive && runtime.status !== "loading" && conversation.status === "open") {
+      const start = conversationButton((conversation.workers || []).length ? "Continue chat · load model" : "Start conversation · load model", () => conversationAction(conversation.id, "start"), "button primary small");
+      start.disabled = conversationBusy || Boolean(activeJob()) || runtime.can_start === false;
+      actions.append(start);
+    }
+    if (!runActive && runtime.can_stop !== false && (worker || runtime.status === "loading" || runtime.status === "ready" || runtime.status === "running")) actions.append(conversationButton(runtime.owned ? "Stop chat / unload model" : "Stop chat", () => conversationAction(conversation.id, "stop")));
+    heading.append(title, actions);
+    $("#conversation-heading").replaceChildren(heading);
+    const info = element("div");
+    info.append(element("strong", "", worker ? `Working context: ${worker.label || worker.id}` : runActive ? "Waiting for the run’s next working context." : runtime.status === "loading" ? "Loading the conversation’s model…" : "No active working context."), element("p", "field-help", worker ? `Native OpenCode session: ${worker.session_id || "not yet recorded"}. Messages go to this worker; stages may switch contexts.` : runActive ? "The run is between active workers. Follow the run to stop the whole operation." : (conversation.workers || []).length ? "Continue explicitly reloads the recorded model and resumes its retained native session. Visiting this conversation does not load a model." : "Start explicitly loads the recorded model and opens its native session. Visiting this conversation does not load a model."));
+    info.append(element("small", "", `Runtime: ${human(runtime.status)}${runtime.owned === true ? " · owned local runtime" : runtime.owned === false ? " · external runtime" : ""}`));
+    if (runtime.error) info.append(element("p", "error-text", runtime.error));
+    if ((conversation.workers || []).length) {
+      const contexts = element("details", "conversation-workers");
+      contexts.append(element("summary", "", "Working contexts and switches"));
+      for (const item of conversation.workers) contexts.append(element("p", "field-help", `${item.label || item.id} · ${item.id === conversation.active_worker_id ? "current" : human(item.status)} · native session ${item.session_id || "unrecorded"}${item.reason ? ` · ${item.reason}` : ""}`));
+      info.append(contexts);
+    }
+    $("#conversation-runtime").replaceChildren(info);
+    const messages = $("#conversation-messages");
+    const priorScroll = messages.scrollTop;
+    const follow = messages.scrollHeight - messages.scrollTop - messages.clientHeight < 80;
+    messages.replaceChildren(...(conversation.messages || []).map((item) => {
+      const article = element("article", `conversation-message ${item.role === "user" ? "from-user" : "from-model"}`);
+      article.id = `conversation-message-${item.id}`;
+      article.tabIndex = -1;
+      const meta = element("div", "conversation-message-meta");
+      const source = conversation.workers?.find((candidate) => candidate.id === item.worker_id);
+      const labels = { queued: "Queued", delivered: "Delivered to worker", answered: "Answered", undelivered: "Not delivered", failed: "Failed" };
+      const deliveryLabel = item.role === "assistant" && item.status === "answered" && !item.reply_to?.length ? "Model message" : labels[item.status] || human(item.status || "recorded");
+      meta.append(element("strong", "", item.role === "user" ? "You" : name), element("span", `conversation-delivery delivery-${Object.hasOwn(labels, item.status) ? item.status : "unknown"}`, deliveryLabel));
+      article.append(meta, element("p", "conversation-visible-text", item.text), element("small", "", [source?.label || item.worker_id, when(item.created_at)].filter(Boolean).join(" · ")));
+      if (item.reason) article.append(element("p", "conversation-delivery-reason", item.reason));
+      return article;
+    }));
+    if (!(conversation.messages || []).length) messages.append(element("p", "conversation-first-message", worker ? "The session is ready. Say hello, or ask what it is working on." : "Your visible conversation will appear here."));
+    messages.scrollTop = follow ? messages.scrollHeight : priorScroll;
+    renderConversationRecovery(conversation);
+  }
+  function renderConversationRecovery(conversation) {
+    const recovery = conversation.recovery || {};
+    const wrap = $("#conversation-recovery");
+    wrap.replaceChildren();
+    if (!recovery.objective && !recovery.id) wrap.append(element("p", "field-help", "No recovery checkpoint has been recorded."));
+    else {
+      wrap.append(element("h3", "", "Recorded objective"), element("p", "conversation-visible-text", recovery.objective || "Not recorded."));
+      for (const [key, label] of [["constraints", "Constraints"], ["completed", "Reported completed · not independently verified"], ["planned", "Planned work"], ["open_questions", "Open questions"]]) {
+        const group = element("section", "conversation-recovery-group");
+        group.append(element("h4", "", label));
+        const values = recovery[key] || [];
+        if (!values.length) group.append(element("p", "field-help", "None recorded."));
+        else for (const item of values) {
+          group.append(element("p", "conversation-visible-text", typeof item === "string" ? item : item.text));
+          if (item.references?.length) group.append(element("pre", "profile-snapshot", JSON.stringify(item.references, null, 2)));
+        }
+        wrap.append(group);
+      }
+      if (recovery.decision_ids?.length) wrap.append(element("p", "field-help", `Recovery decision IDs: ${recovery.decision_ids.join(", ")}`));
+    }
+    const decisions = $("#conversation-decisions");
+    decisions.replaceChildren(element("h3", "", "Consequential decisions"), element("p", "field-help", "A declared connection from conversation to a working decision. This does not establish a benefit or adopt a technical harness."));
+    for (const decision of conversation.decisions || []) {
+      const article = element("article", "conversation-decision");
+      article.append(element("span", "soft-tag", human(decision.status)), element("p", "conversation-visible-text", decision.text), element("p", "field-help", decision.why));
+      for (const id of decision.source_message_ids || []) article.append(conversationButton(`Source message ${id.slice(0, 8)} ↗`, () => { const node = document.getElementById(`conversation-message-${id}`); node?.scrollIntoView({ behavior: "smooth", block: "center" }); node?.focus({ preventScroll: true }); }, "text-button"));
+      if (decision.supersedes_id) article.append(element("small", "", `Revises or reverts decision ${decision.supersedes_id}`));
+      decisions.append(article);
+    }
+    if (!(conversation.decisions || []).length) decisions.append(element("p", "field-help", "No consequential decisions have been recorded. Casual conversation can stay casual."));
+  }
+
   function capabilityState() { return state?.capabilities || { enabled: false, profile_access: {}, entries: [] }; }
   function capabilityEntries() { return Array.isArray(capabilityState().entries) ? capabilityState().entries : []; }
   function capabilityParents(entry) {
@@ -1440,6 +1699,7 @@
     renderJobs();
     renderProfiles();
     renderCapabilities();
+    renderConversations();
     renderPlan();
     updateBusy();
   }
@@ -1462,6 +1722,7 @@
         remember("harness2_selected_job", selectedId);
       }
       renderState();
+      if (view === "conversations") loadConversation();
       const summary = state.jobs?.find((job) => job.id === selectedId);
       if (selectedId && (!selectedJob || isActive(summary?.status) || summary?.status !== selectedJob.status)) loadDetail();
     } catch (error) {
@@ -1747,6 +2008,7 @@
       const configuration = profile?.configurations?.find((item) => item.id === (params.profile_configuration_id || profile.active_configuration_id));
       $("#confirm-facts").append(element("p", "", `${profile?.name || "Profile"} · ${configuration?.label || "saved configuration"} · ${revisionLabel(profile || {}, params.profile_revision_id || profile?.active_revision_id)}`), element("p", "", "This exact starting point is saved with the run. Any resulting harness remains a candidate until you choose to activate it."));
     }
+    if (params.conversation_enabled) $("#confirm-facts").append(element("p", "", "Conversation during work is on. Your messages reach the active native worker. Human contact is recorded as context; benefit is unproven."));
     text("#confirm-compute", settings?.provider === "local" ? settings?.local_runtime === "managed" ? "Your local model loads for this run and unloads after grading and reporting, failure, or stop. You can stop the run from Runs." : "Your local model will use this machine’s computing resources. You can stop the run from Runs." : "This uses your connected provider and may incur charges. You can stop the run from Runs.");
     text("#confirm-accept", resume ? "Resume run" : "Start experiment");
     dialog.returnValue = "cancel";
@@ -1937,6 +2199,10 @@
   $("#onboarding-demo").addEventListener("click", () => launch("demo", { k: 2, mode: "both" }));
   $("#experiment-form").addEventListener("submit", (event) => { event.preventDefault(); const params = formParams(); if (params) launch("benchmark", params, true); });
   $("#profile-create-form").addEventListener("submit", createProfile);
+  $("#conversation-create-form").addEventListener("submit", (event) => { event.preventDefault(); if ($("#conversation-create-form").reportValidity()) createConversation($("#conversation-profile").value, { title: $("#conversation-title").value.trim() }); });
+  $("#conversation-compose-form").addEventListener("submit", sendConversationMessage);
+  $("#conversation-draft").addEventListener("input", () => { if (selectedConversationId) conversationDrafts.set(selectedConversationId, $("#conversation-draft").value); });
+  $("#conversation-draft").addEventListener("keydown", (event) => { if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) sendConversationMessage(event); });
   $("#capability-search").addEventListener("input", renderCapabilityList);
   $("#experiment-profile").addEventListener("change", renderExperimentProfile);
   ["experiment-configuration", "experiment-revision"].forEach((id) => $("#" + id).addEventListener("change", renderExperimentProfile));

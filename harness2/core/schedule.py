@@ -436,9 +436,12 @@ def _roll_bases(
     """Roll the pending (label, run_id) reference executions, natively batched when possible."""
     if not pending:
         return {}
+    from ..conversation_runtime import enabled as conversation_enabled
+
+    serial = conversation_enabled()
     rolled: dict[str, RunView] = {}
     execute_many = getattr(adapter, "execute_many", None)
-    if len(pending) > 1 and callable(execute_many):
+    if len(pending) > 1 and callable(execute_many) and not serial:
         try:
             dirs = list(execute_many(task_id, None, [rid for _lbl, rid in pending]))
             for i, (label, rid) in enumerate(pending):
@@ -475,7 +478,7 @@ def _roll_bases(
     if len(pending) == 1:
         rv = _one(pending[0])
         return {rv.label: rv}
-    width = min(len(pending), ROLLOUT_PARALLEL)
+    width = 1 if serial else min(len(pending), ROLLOUT_PARALLEL)
     with ThreadPoolExecutor(max_workers=max(1, width)) as pool_r:
         return {rv.label: rv for rv in pool_r.map(_one, pending)}
 
@@ -500,6 +503,9 @@ def _run_one_mode(
     """Run one recursion mode over the shared bases, select a final, and record it on `res`."""
     work_dir = n.task_dir(runs_root, task_id)
     lib_dir = mode_lib.context_dir() if mode_lib else None
+    from ..conversation_runtime import enabled as conversation_enabled
+
+    phase_workers = {"propose_workers": 1, "rollout_workers": 1} if conversation_enabled() else {}
     r = recursion.run_mode(
         mode,
         task_id,
@@ -511,6 +517,7 @@ def _run_one_mode(
         run_id_of=lambda lbl, _n=n: _n.run_id(task_id, lbl),
         base_tree=base_tree,
         library_dir=lib_dir,
+        **phase_workers,
     )
     res.modes[mode] = r.to_dict()
     candidates = selection.selection_pool(mode, k, r.rollouts, base)

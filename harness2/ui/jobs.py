@@ -74,6 +74,7 @@ class JobManager:
         self.cancelled = set()
         self.threads = {}
         self.active_id = None
+        self.conversations = None
         for path in self.directory.glob("*.json"):
             record = read_json(path)
             if not isinstance(record, dict) or not re.fullmatch(
@@ -166,6 +167,12 @@ class JobManager:
                     if not isinstance(data[key], str) or not re.fullmatch(r"[a-f0-9]{64}", data[key]):
                         raise ValueError("Choose a valid saved profile configuration or harness.")
                     result[key] = data[key]
+        if "conversation_enabled" in data and type(data["conversation_enabled"]) is not bool:
+            raise ValueError("Conversation participation must be enabled explicitly.")
+        if data.get("conversation_enabled"):
+            if not profile_id or benchmark != "jb" or substrate != "oc" or numbers["workers"] != 1:
+                raise ValueError("Conversation runs require a profile, JobBench, OpenCode, and one domain worker.")
+            result["conversation_enabled"] = True
         return result
 
     def _cell(self, params: dict) -> list[str]:
@@ -270,6 +277,8 @@ class JobManager:
         with self.lock:
             if self.active_id:
                 raise BusyError("Another operation is running. Let it finish or stop it first.")
+            if self.conversations is not None and self.conversations.busy:
+                raise BusyError("Stop the idle conversation before starting another operation.")
             effective_settings = self.workspace.settings()
             if resume_id:
                 prior = self.jobs.get(resume_id)
@@ -307,6 +316,12 @@ class JobManager:
                     from ..profile_runtime import load_snapshot
 
                     pinned = load_snapshot(output / "profile-start.json")
+            if params.get("conversation_enabled") and kind not in ("benchmark", "preview", "judge", "report"):
+                raise ValueError("Conversation participation is available for profile experiments only.")
+            if params.get("conversation_enabled") and kind in ("benchmark", "preview"):
+                from ..conversation_runtime import require_worker_containment
+
+                require_worker_containment()
             if (
                 kind in ("benchmark", "judge")
                 and (params.get("profile_id") or self.workspace.settings()["provider"] == "local")
@@ -361,6 +376,8 @@ class JobManager:
                     )
             if pinned:
                 effective_settings = pinned["configuration"]["settings"]
+            if params.get("conversation_enabled") and effective_settings.get("provider", "local") != "local":
+                raise ValueError("Conversational experiments require a saved local model configuration.")
             phases = (self._plan(kind, params, output, provider=effective_settings.get("provider", "local"))
                       if params.get("profile_id") else self._plan(kind, params, output))
             benchmark_name = next(
@@ -439,6 +456,15 @@ class JobManager:
                 )
             elif profile_plan:
                 record["profile_plan"] = profile_plan
+            if params.get("conversation_enabled") and kind in ("benchmark", "preview"):
+                if kind == "benchmark":
+                    if self.conversations is None or pinned is None:
+                        raise ValueError("The conversation service and a pinned profile are required.")
+                    if resume_id and prior.get("conversation_id"):
+                        record["conversation_id"] = prior["conversation_id"]
+                    self.conversations.begin_run(record, pinned)
+                else:
+                    record["conversation_plan"] = {"enabled": True, "serialized_workers": True}
             self.jobs[identifier] = record
             self.active_id = identifier
             self._write(record)
@@ -481,6 +507,10 @@ class JobManager:
         log_path = self.directory / f"{identifier}.log"
         try:
             env = self.workspace.environment()
+            # Participation belongs to this recorded operation, never to an
+            # ambient variable inherited by the Studio process.
+            env.pop("HARNESS2_CONVERSATION_ID", None)
+            env.pop("HARNESS2_CONVERSATION_WORKSPACE", None)
             if record["output_dir"]:
                 env["HARNESS2_RUNS_DIR"] = record["output_dir"]
             if record.get("profile"):
@@ -494,6 +524,8 @@ class JobManager:
                 from ..cli.local_run import _local_environment
 
                 env = _local_environment(env)
+            if record.get("conversation_id"):
+                env = self.conversations.run_environment(record, env)
             secret_values = self.workspace.secrets()
             record.update(status="running", started_at=now())
             with log_path.open("a", encoding="utf-8", newline="\n") as log:
@@ -669,6 +701,11 @@ class JobManager:
                 for phase in record["phases"]:
                     if phase["status"] == "running":
                         phase["status"] = status
+                if record.get("conversation_id"):
+                    try:
+                        self.conversations.end_run(record)
+                    except (OSError, ValueError) as exc:
+                        record["conversation_error"] = redact(str(exc))
                 try:
                     tasks, _ = self.results(record)
                     record["progress"] = {
@@ -700,6 +737,10 @@ class JobManager:
             if identifier not in self.jobs:
                 raise KeyError(identifier)
             record = copy.deepcopy(self.jobs[identifier])
+        if record.get("conversation_id") and self.conversations is not None and record.get("status") in ACTIVE:
+            from ..conversation_runtime import provenance
+
+            record["conversation"] = provenance(self.conversations.store, record["conversation_id"])
         path = self.directory / f"{identifier}.log"
         if path.is_file():
             with path.open("rb") as stream:

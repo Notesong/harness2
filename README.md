@@ -15,7 +15,8 @@
 This is [Notesong's independently maintained fork](https://github.com/Notesong/harness2)
 of [Google Research's Harness²](https://github.com/google-research/harness2).
 It adds Windows support, a local browser interface, a llama.cpp workflow,
-independent model profiles, and an optional capability catalog. The original
+independent model profiles, optional conversations with working sessions, and an
+optional capability catalog. The original
 research, authorship, citation, and license notices are retained.
 
 Start with [Harness² Studio](docs/UI.md) for the interface or the
@@ -117,6 +118,10 @@ experience, and run history independent. Candidates can be tested without
 adoption, simplified, retired, or explicitly borrowed; see [model profiles](docs/PROFILES.md).
 The optional [capability catalog](docs/CAPABILITIES.md) shares selected components
 with provenance. It starts disabled; model reference access is a separate profile opt-in.
+Opt-in [conversations](docs/CONVERSATIONS.md) connect to the actual working
+OpenCode session, with recorded delivery and decision ancestry. Conversation
+during work requires Windows and starts off; idle chat uses an explicit model connection and unloads
+its owned model after inactivity.
 
 Use **Windows or Linux, Python 3.12, and [uv](https://docs.astral.sh/uv/getting-started/installation/)**.
 On Windows, run these commands in PowerShell from the repository root:

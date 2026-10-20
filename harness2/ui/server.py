@@ -38,6 +38,10 @@ class App:
         from .capabilities import Capabilities
 
         self.capabilities = Capabilities(self.workspace, self.profiles)
+        from .conversations import Conversations
+
+        self.conversations = Conversations(self.workspace, self.jobs)
+        self.jobs.conversations = self.conversations
         self.token = secrets.token_urlsafe(32)
 
     def state(self):
@@ -58,6 +62,8 @@ class App:
             "active_id": active_id,
             "profiles": self.profiles.list(),
             "capabilities": self.capabilities.state(),
+            "conversations": self.conversations.list(),
+            "features": {"conversation_runs": os.name == "nt"},
         }
 
     def connection(self, data: dict):
@@ -125,6 +131,7 @@ class App:
 
     def close(self):
         self.jobs.close()
+        self.conversations.close()
 
 
 class LocalServer(ThreadingHTTPServer):
@@ -208,6 +215,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(self.server.app.profiles.get(path.rsplit("/", 1)[1]))
             elif path.startswith("/api/capabilities/") and len(path.strip("/").split("/")) == 3:
                 self._json(self.server.app.capabilities.get(path.rsplit("/", 1)[1]))
+            elif path.startswith("/api/conversations/") and len(path.strip("/").split("/")) == 3:
+                self._json(self.server.app.conversations.get(path.rsplit("/", 1)[1]))
             elif path.startswith("/api/jobs/") and len(path.strip("/").split("/")) == 3:
                 self._json(self.server.app.jobs.get(path.rsplit("/", 1)[1]))
             elif path.startswith("/api/artifacts/"):
@@ -254,7 +263,14 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError("Expected a JSON object.")
             path = urlsplit(self.path).path
             app = self.server.app
-            if path.startswith("/api/capabilities/"):
+            if path == "/api/conversations":
+                self._json(app.conversations.create(data), 201)
+            elif path.startswith("/api/conversations/"):
+                parts = path.strip("/").split("/")
+                if len(parts) != 4:
+                    raise KeyError(path)
+                self._json(app.conversations.command(parts[2], parts[3], data))
+            elif path.startswith("/api/capabilities/"):
                 parts = path.strip("/").split("/")
                 if len(parts) != 3:
                     raise KeyError(path)
@@ -297,7 +313,7 @@ class Handler(BaseHTTPRequestHandler):
                     raise KeyError(path)
             elif path == "/api/settings":
                 with app.jobs.lock:
-                    if app.jobs.active_id:
+                    if app.jobs.active_id or app.conversations.busy:
                         raise BusyError(
                             "Let the current operation finish before changing its model connection."
                         )

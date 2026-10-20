@@ -337,6 +337,15 @@ def candidate_from_run(store: ProfileStore, profile_id: str, record: dict, *, la
                  "evidence_status": "observed",
                  "qualification": "Chosen within one run; benefit across tasks unproven."}]
     borrowed = []
+    modes = summary.get("modes") or {}
+    facts = modes.get(selected_mode, {}) if isinstance(modes, dict) else {}
+    stages = facts.get("stages", []) if isinstance(facts, dict) else []
+    if not isinstance(stages, list):
+        stages = []
+    notes = str(selection.get("why", "")) + "\n" + "\n".join(
+        str(stage.get("notes", "")) for stage in stages if isinstance(stage, dict)
+        and stage.get("label") == chosen_label
+    )
     snapshot_path = output / SNAPSHOT_NAME
     if snapshot_path.is_file():
         snapshot = load_snapshot(snapshot_path)
@@ -348,25 +357,34 @@ def candidate_from_run(store: ProfileStore, profile_id: str, record: dict, *, la
 
             evidence.append({"catalog_exposed_ids": [entry["id"] for entry in entries],
                              "qualification": "Catalog exposure records availability, not use."})
-            modes = summary.get("modes") or {}
-            facts = modes.get(selected_mode, {}) if isinstance(modes, dict) else {}
-            stages = facts.get("stages", []) if isinstance(facts, dict) else []
-            if not isinstance(stages, list):
-                stages = []
-            notes = str(selection.get("why", "")) + "\n" + "\n".join(
-                str(stage.get("notes", "")) for stage in stages if isinstance(stage, dict)
-                and stage.get("label") == chosen_label
-            )
             claims = declared_sources(snapshot, notes)
             evidence.extend(claims)
             borrowed = [{"profile_id": claim["origin"]["profile_id"],
                          "revision_id": claim["origin"]["revision_id"],
                          "component": claim["capability_id"]} for claim in claims]
+    motivated = []
+    if record.get("conversation_id"):
+        from .conversation_runtime import provenance
+        from .conversations import ConversationStore
+
+        conversations = ConversationStore(store.workspace_root)
+        conversation = conversations.get(record["conversation_id"])
+        if conversation["profile_id"] != profile_id:
+            raise ValueError("The source conversation belongs to another model profile.")
+        evidence.append(record.get("conversation") or provenance(conversations, conversation["id"]))
+        declared = set(re.findall(r"(?im)^\s*CONVERSATION_DECISION:\s*([a-f0-9]{32})\s*$", notes))
+        for decision in conversation["decisions"]:
+            if decision["id"] in declared:
+                motivated.append({"conversation_id": conversation["id"], "decision_id": decision["id"],
+                    "source_message_ids": decision["source_message_ids"], "declared_status": decision["status"],
+                    "later_decision_ids": [item["id"] for item in conversation["decisions"]
+                                           if item.get("supersedes_id") == decision["id"]],
+                    "qualification": "Selected-stage declaration of influence; benefit is not established."})
     return store.add_revision(
         profile_id, harness, label=label or "Candidate from " + record.get("title", "run"),
         parents=parents, why=why or "Chosen within this run; benefit across tasks remains unproven.",
         evidence=evidence, domain=summary.get("domain", ""), operation="adapt",
-        experience=selection.get("experience") or {}, borrowed_from=borrowed,
+        experience=selection.get("experience") or {}, borrowed_from=borrowed, motivated_by=motivated,
     )
 
 
@@ -440,6 +458,12 @@ def profile_run_outcome(store: ProfileStore, binding: dict, output: Path, record
         "status": record.get("status", "unknown"), "outcomes": outcomes,
         "candidate_revision_ids": candidates, "archive_warnings": warnings,
     }
+    if record.get("conversation_id"):
+        from .conversation_runtime import provenance
+        from .conversations import ConversationStore
+
+        reference["conversation"] = (record.get("conversation")
+                                     or provenance(ConversationStore(store.workspace_root), record["conversation_id"]))
     for key in ("created_at", "finished_at"):
         if record.get(key):
             reference[key] = record[key]

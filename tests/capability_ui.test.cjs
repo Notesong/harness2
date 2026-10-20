@@ -328,11 +328,11 @@ test("run disclosure preserves recorded catalog availability after the catalog i
   assert.doesNotMatch(detail.textContent, /Inspect the recorded references/);
 });
 
-test("responsive navigation includes six labelled views and no inline scripts", () => {
+test("responsive navigation includes seven labelled views and no inline scripts", () => {
   const html = fs.readFileSync(path.join(__dirname, "../harness2/ui/assets/index.html"), "utf8");
   const css = fs.readFileSync(path.join(__dirname, "../harness2/ui/assets/app.css"), "utf8");
-  assert.equal((html.match(/class="nav-item(?: selected)?"/g) || []).length, 6);
+  assert.equal((html.match(/class="nav-item(?: selected)?"/g) || []).length, 7);
   assert.match(html, /data-view="capabilities"/);
-  assert.match(css, /\.navigation \.nav-item\{width:16\.666%/);
+  assert.match(css, /\.navigation \.nav-item\{width:14\.285%/);
   assert.doesNotMatch(html, /onclick=|<script>\s*\S/);
 });

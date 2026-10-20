@@ -194,7 +194,11 @@ def _attempt(
     os.close(handle)
     with open(raw, "w", encoding="utf-8") as out, log_file.open("a", encoding="utf-8") as err:
         try:
-            code = run_process(
+            from ..conversation_runtime import enabled
+            from ..conversation_runtime import run as conversation_run
+
+            execute = conversation_run if enabled(os.environ) else run_process
+            code = execute(
                 _command(cfg, workspace, prompt, title),
                 cwd=cfg.opencode_dir,
                 env=opencode_env({**os.environ, "OPENCODE_PERMISSION": _permission(workspace)},
@@ -238,7 +242,10 @@ def run_one(cfg: Settings, task_id: str) -> bool:
         return True
     traj_dir.mkdir(parents=True, exist_ok=True)
 
-    workspace = TEMP_BASE / f"{task_name}_{cfg.label}_{os.getpid()}"
+    from ..conversation_runtime import working_directory
+
+    retained = working_directory(os.environ, f"{task_name} | {cfg.label}")
+    workspace = retained or TEMP_BASE / f"{task_name}_{cfg.label}_{os.getpid()}"
     output_dir = workspace / "output"
     _stage(task_dir, cfg.render_dir, workspace)
 
@@ -265,10 +272,11 @@ def run_one(cfg: Settings, task_id: str) -> bool:
         _log(log_file, f"[{_hms()}] output -> {final_output_dir}")
     else:
         _log(log_file, f"[{_hms()}] NO OUTPUT for {task_id} ({cfg.label})")
-    try:
-        remove_tree(workspace)
-    except OSError as exc:
-        _log(log_file, f"[{_hms()}] WARNING scratch cleanup failed for {workspace}: {exc}")
+    if retained is None:
+        try:
+            remove_tree(workspace)
+        except OSError as exc:
+            _log(log_file, f"[{_hms()}] WARNING scratch cleanup failed for {workspace}: {exc}")
     return delivered and _nonempty(final_output_dir)
 
 

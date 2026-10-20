@@ -385,6 +385,34 @@ class ProfileRuntimeTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             candidate_from_run(self.store, "owen", record)
 
+    def test_conversation_influence_requires_selected_stage_declaration_and_no_raw_chat(self):
+        from harness2.conversations import ConversationStore
+
+        record, task, _ = self.saved_candidate()
+        conversations = ConversationStore(self.root)
+        conversation = conversations.create("owen", self.configuration["id"], self.revision["id"],
+                                            run_id=record["id"])
+        identifier = conversation["id"]
+        conversations.bind_worker(identifier, "worker", label="Proposal", session_id="ses_fixture")
+        source = conversations.enqueue(identifier, "PRIVATE_CHAT_SENTINEL: draft files earlier.")
+        decision = conversations.record_decision(identifier, text="PRIVATE_DECISION_SENTINEL", why="Human suggestion.",
+                                                  source_message_ids=[source["id"]], status="adopted")
+        record["conversation_id"] = identifier
+        path = task / "summary.json"
+        summary = json.loads(path.read_text(encoding="utf-8"))
+        summary["modes"] = {"agg": {"stages": [{"label": "discarded", "notes":
+            "CONVERSATION_DECISION: " + decision["id"]}]}}
+        path.write_text(json.dumps(summary), encoding="utf-8")
+        unrelated = candidate_from_run(self.store, "owen", record)
+        self.assertEqual(unrelated["motivated_by"], [])
+        summary["modes"]["agg"]["stages"].append({"label": "agg1", "notes":
+            "CONVERSATION_DECISION: " + decision["id"]})
+        path.write_text(json.dumps(summary), encoding="utf-8")
+        linked = candidate_from_run(self.store, "owen", record)
+        self.assertEqual(linked["motivated_by"][0]["decision_id"], decision["id"])
+        self.assertEqual(linked["motivated_by"][0]["source_message_ids"], [source["id"]])
+        self.assertNotIn("PRIVATE_", str(self.store.get("owen")))
+
     @unittest.skipIf(os.name == "nt", "Case-distinct source filenames require a case-sensitive filesystem.")
     def test_from_run_rejects_case_colliding_files_before_surface_filter(self):
         record, _, harness = self.saved_candidate()

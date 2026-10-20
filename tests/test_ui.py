@@ -144,6 +144,44 @@ class UITests(unittest.TestCase):
                 self.assertEqual(status, 400, value)
         self.assertIsNone(self.app.jobs.active_id)
 
+    def test_conversation_routes_share_auth_and_creation_does_not_load_a_model(self):
+        from harness2.profiles import ProfileStore
+
+        profiles = ProfileStore(self.root)
+        profiles.create("Owen")
+        configuration = profiles.add_configuration("owen", {
+            "settings": {"provider": "local", "local_model": "synthetic"}, "identity": {"model": "synthetic"}})
+        revision = profiles.add_revision("owen", {"guardrails.md": "A synthetic harness."})
+        profiles.activate("owen", configuration_id=configuration["id"], revision_id=revision["id"])
+        with patch("harness2.ui.conversations.ManagedLocalServer", side_effect=AssertionError("Creation must not load")):
+            status, conversation, _ = self.request("POST", "/api/conversations", {"profile_id": "owen"})
+        self.assertEqual(status, 201, conversation)
+        identifier = conversation["id"]
+        self.assertFalse(conversation["runtime"]["connected"])
+        self.assertTrue(conversation["runtime"]["can_start"])
+        for method, path, data in (("GET", "/api/conversations/" + identifier, None),
+                                   ("POST", f"/api/conversations/{identifier}/messages", {"text": "Hello"}),
+                                   ("POST", f"/api/conversations/{identifier}/start", {})):
+            status, _, _ = self.request(method, path, data, authorized=False)
+            self.assertEqual(status, 401)
+            status, _, _ = self.request(method, path, data, headers={"Origin": "https://attacker.example"})
+            self.assertEqual(status, 403)
+        status, value, _ = self.request("POST", f"/api/conversations/{identifier}/messages", {"text": "Hello"})
+        self.assertEqual(status, 400, value)
+        status, state, _ = self.request("GET", "/api/state")
+        self.assertEqual(status, 200)
+        self.assertEqual(state["conversations"][0]["id"], identifier)
+        self.assertNotIn(SECRET, json.dumps(state))
+
+    def test_conversational_experiment_parameters_are_explicit_and_bounded(self):
+        base = {"profile_id": "owen", "benchmark": "jb", "substrate": "oc", "workers": 1}
+        self.assertNotIn("conversation_enabled", self.app.jobs.parameters(base))
+        self.assertTrue(self.app.jobs.parameters({**base, "conversation_enabled": True})["conversation_enabled"])
+        for override in ({"profile_id": ""}, {"benchmark": "lab"}, {"substrate": "cx"}, {"workers": 2},
+                         {"conversation_enabled": "true"}, {"conversation_enabled": 1}):
+            with self.subTest(override=override), self.assertRaises(ValueError):
+                self.app.jobs.parameters({**base, "conversation_enabled": True, **override})
+
     def test_local_profile_checks_effective_source_experiment_before_judging(self):
         record, _ = self.synthetic_record()
         record["kind"] = "benchmark"

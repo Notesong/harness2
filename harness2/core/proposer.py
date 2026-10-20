@@ -156,7 +156,10 @@ class Proposer:
         for attempt in range(1, tries + 1):
             if attempt > 1:
                 time.sleep(10 * (attempt - 1))
-            tmp = Path(tempfile.mkdtemp(prefix="harness2-prop-"))
+            from ..conversation_runtime import working_directory
+
+            retained = working_directory(os.environ, label)
+            tmp = retained or Path(tempfile.mkdtemp(prefix="harness2-prop-"))
             try:
                 if context_dir and Path(context_dir).is_dir():
                     shutil.copytree(context_dir, tmp / "context", dirs_exist_ok=True)
@@ -189,7 +192,8 @@ class Proposer:
             except Exception as exc:
                 last = f"{type(exc).__name__}: {exc}"
             finally:
-                shutil.rmtree(tmp, ignore_errors=True)
+                if retained is None:
+                    shutil.rmtree(tmp, ignore_errors=True)
 
         r = Reply(
             label=label,
@@ -301,7 +305,11 @@ class Proposer:
         ]
         if self.spec.effort:
             cmd += ["--variant", self.spec.effort]
-        p = run_process(
+        from ..conversation_runtime import enabled
+        from ..conversation_runtime import run as conversation_run
+
+        execute = conversation_run if enabled(env) else run_process
+        p = execute(
             cmd,
             cwd=cwd,
             env=env,

@@ -112,7 +112,10 @@ observation behind it.
 
 Observations and hypotheses can include an optional conversation reference.
 This preserves why an idea arose without copying a conversation into every
-model context. Casual conversation is not archived automatically.
+model context. A profile's **Talk to [name]** opens an explicit
+[native-session conversation](CONVERSATIONS.md). Its visible history and working
+decision ancestry are stored separately. Casual chat is not automatically
+promoted into profile notes, conversational memory, or harness instructions.
 
 ## Experiments cannot rewrite the archive
 

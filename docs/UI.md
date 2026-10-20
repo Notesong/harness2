@@ -135,6 +135,25 @@ benefit. Disabling the catalog affects new experiments; existing runs keep their
 pinned starting snapshots. See [CAPABILITIES.md](CAPABILITIES.md) for the exposure
 gates, ancestry, and current limits.
 
+## Talk with the working session
+
+**Conversations** keeps visible chat with a profile's actual native OpenCode
+session. Creating or viewing a conversation does not start a model; **Start
+conversation** does. A profile's **Talk to [name]** deliberately creates and
+starts one using its saved configuration and harness.
+
+For a run-linked conversation on Windows, choose a local profile, JobBench/OpenCode, and one
+domain worker, then check **Conversation during work**. This option starts off.
+The run links to the conversation, which identifies its active worker and native
+context. Delivery states distinguish queued, delivered, answered, undelivered,
+and failed messages. **Working continuity** shows sourced decisions and recovery
+state; conversational memory remains a separate reserved space.
+
+Use the run's stop control during work. An idle chat has its own stop control
+and disconnects after ten minutes without activity, unloading its owned model.
+**Continue chat** explicitly reconnects its retained session. See
+[CONVERSATIONS.md](CONVERSATIONS.md) for lifecycle, storage, and evidence limits.
+
 ## Follow, stop, and resume
 
 Studio runs one operation at a time. Its subprocesses use the same process-tree
@@ -182,6 +201,8 @@ Recognized existing CLI runs are discovered as read-only history. Profiles and
 their append-only histories live in the separate `.harness2/profiles/` archive.
 The optional catalog has its own `.harness2/capabilities/` archive. Back up both
 archives and the run folders when preserving profiles and their supporting work.
+Conversations and their private retained native sessions use separate directories
+under `.harness2/`; see [conversation storage](CONVERSATIONS.md#retained-session-data).
 
 The server binds only to `127.0.0.1`, checks Host and Origin, and requires a
 random session token for every API request and artifact download. The browser
