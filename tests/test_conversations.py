@@ -122,6 +122,75 @@ class ConversationsTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.store.bind_worker(self.identifier, "worker-one", label="Synthetic worker", session_id="a-new-session")
 
+    def test_committed_tool_message_retries_after_restart_without_new_unread_entry(self):
+        self.bind()
+        tool_id = "tool:" + "a" * 32
+        original = self.store.assistant(self.identifier, "A useful stage update.", worker_id="worker-one",
+                                        session_message_id=tool_id)
+        native = self.store.assistant(self.identifier, "An ordinary native answer.", worker_id="worker-one",
+                                      session_message_id="msg_native_reply")
+        self.store.end_worker(self.identifier, "worker-one", "Restarted before writing the tool acknowledgement.")
+        self.bind("worker-two")
+        restored = ConversationStore(self.root)
+        before = restored.get(self.identifier)
+        replay = restored.assistant(self.identifier, original["text"], worker_id="worker-two", session_message_id=tool_id)
+        self.assertEqual(replay, original)
+        self.assertEqual(restored.get(self.identifier), before)
+        with self.assertRaisesRegex(ValueError, "cannot change"):
+            restored.assistant(self.identifier, "An altered stage update.", worker_id="worker-two", session_message_id=tool_id)
+        self.assertEqual(restored.get(self.identifier), before)
+        later_native = restored.assistant(self.identifier, native["text"], worker_id="worker-two",
+                                          session_message_id="msg_native_reply")
+        self.assertNotEqual(later_native["id"], native["id"])
+        self.assertEqual(len(restored.get(self.identifier)["messages"]), 3)
+
+    def test_committed_decision_request_retries_across_workers_and_rejects_changes(self):
+        self.bind()
+        source = self.store.enqueue(self.identifier, "Please preserve the consequence of this exchange.")
+        packet = {"text": "Preserve decision ancestry.", "why": "The exchange changed the plan.",
+                  "source_message_ids": [source["id"]], "status": "adopted", "request_id": "b" * 32}
+        first = self.store.record_decision(self.identifier, worker_id="worker-one", **packet)
+        revised = self.store.record_decision(self.identifier, text="Keep a narrower trace.", why="A later refinement.",
+            source_message_ids=[source["id"]], status="revised", supersedes_id=first["id"], worker_id="worker-one")
+        self.store.end_worker(self.identifier, "worker-one", "Restarted before acknowledgement.")
+        self.bind("worker-two")
+        restored = ConversationStore(self.root)
+        before = restored.get(self.identifier)
+        replay = restored.record_decision(self.identifier, worker_id="worker-two", **packet)
+        self.assertEqual(replay, first)
+        self.assertEqual(restored.get(self.identifier), before)
+        self.assertEqual(before["decisions"][-1], revised)
+        for changes in ({"text": "Different choice."}, {"why": "Different ancestry."}, {"status": "proposed"}):
+            with self.subTest(changes=changes), self.assertRaisesRegex(ValueError, "cannot change"):
+                restored.record_decision(self.identifier, worker_id="worker-two", **(packet | changes))
+        with self.assertRaisesRegex(ValueError, "cannot change"):
+            restored.checkpoint(self.identifier, objective="A request cannot change kind.", request_id=packet["request_id"])
+        self.assertEqual(restored.get(self.identifier), before)
+
+    def test_old_checkpoint_retry_returns_original_without_replacing_later_recovery(self):
+        self.bind()
+        packet = {"objective": "Write the deliverable.", "completed": ["Read the task."],
+                  "planned": ["Write the output."], "open_questions": ["Which details need citations?"],
+                  "request_id": "c" * 32}
+        first = self.store.checkpoint(self.identifier, worker_id="worker-one", **packet)
+        latest = self.store.checkpoint(self.identifier, worker_id="worker-one", objective="Verify the deliverable.",
+            completed=["Wrote the output."], planned=["Check citations."], request_id="d" * 32)
+        self.store.end_worker(self.identifier, "worker-one", "Restarted before an old acknowledgement.")
+        self.bind("worker-two")
+        restored = ConversationStore(self.root)
+        before = restored.get(self.identifier)
+        replay = restored.checkpoint(self.identifier, worker_id="worker-two", **packet)
+        self.assertEqual(replay, first)
+        self.assertEqual(restored.get(self.identifier), before)
+        self.assertEqual(restored.get(self.identifier)["recovery"], latest)
+        for changes in ({"planned": ["A different next step."]}, {"completed": ["Claim a different result."]}):
+            with self.subTest(changes=changes), self.assertRaisesRegex(ValueError, "cannot change"):
+                restored.checkpoint(self.identifier, worker_id="worker-two", **(packet | changes))
+        self.assertEqual(restored.get(self.identifier), before)
+        for identifier in ("", "A" * 32, "x" * 32, "a" * 64):
+            with self.subTest(identifier=identifier), self.assertRaises(ValueError):
+                restored.checkpoint(self.identifier, request_id=identifier)
+
     def test_new_worker_does_not_inherit_predecessor_pending_messages(self):
         self.bind()
         prior = self.store.enqueue(self.identifier, "For the earlier worker")

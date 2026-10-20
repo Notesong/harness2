@@ -36,6 +36,42 @@ candidates. You can also explicitly save a harness from an older completed run.
 Adoption is an explicit selection for future work. A completed run, a selected
 candidate, and demonstrated improvement are separate facts.
 
+## Inspect current capabilities
+
+The profile detail's **Current capabilities** is a readable inventory of its
+active saved configuration and harness revision. It identifies both selections
+and groups the harness's always-on guidance, technical memory, custom skills,
+subagents, scripts, and plugins. File paths, sizes, and content hashes describe
+what is recorded; opening the inventory does not execute those files, call a
+model, or activate a candidate.
+
+The inventory separates three layers:
+
+| Layer | What the inventory establishes |
+| --- | --- |
+| Profile components | Files included in the selected saved harness. |
+| Runtime tools | A catalog from the pinned OpenCode source, with runtime-dependent, conditional, or declared-disabled status. |
+| Application permissions | Public saved tool gates and permission modes, with their practical limits. |
+
+OpenCode's built-in read, write, search, shell, task-list, and delegation tools
+exist separately from custom harness files. A skill loader can be available with
+no profile-installed skills. Web search, code search, language-server tools, and
+other conditional features depend on their runtime configuration and services;
+the inventory does not establish that they work on this machine. Global settings
+and discovered plugins or skills were not inspected. If the OpenCode pin changes,
+the static tool catalog is withheld until it is updated.
+
+The technical memory file is harness guidance, separate from selected experience
+and conversational memory. Associating a configuration with a revision does not
+prove that configuration authored its files. This inventory is also separate
+from the optional shared [capability catalog](CAPABILITIES.md): inspecting a
+profile does not publish components or enable cross-profile access.
+
+Application permissions are not an OS sandbox. OpenCode's external-directory
+checks do not confine arbitrary shell commands; host commands and plugins run
+with the Studio user's operating-system permissions. The inventory shows these
+limits rather than claiming effective isolation or a live observed toolset.
+
 ## Configurations describe what was recorded
 
 A configuration contains public connection settings and an identity snapshot:
@@ -117,7 +153,7 @@ model context. A profile's **Talk to [name]** opens an explicit
 decision ancestry are stored separately. Casual chat is not automatically
 promoted into profile notes, conversational memory, or harness instructions.
 
-## Experiments cannot rewrite the archive
+## Archive integrity and experiment boundaries
 
 Profile state lives under `.harness2/profiles/` in the workspace. Immutable
 SHA256-addressed configuration and revision objects are published through an

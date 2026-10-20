@@ -28,7 +28,17 @@ class Profiles:
         for row in result.get("runs", []):
             if not row.get("job_id") and row.get("output_dir") in outputs:
                 row["job_id"] = outputs[row["output_dir"]]
+        if result.get("active_configuration_id") and result.get("active_revision_id"):
+            from ..profile_inventory import build_inventory
+
+            result["capabilities"] = build_inventory(result)
         return result
+
+    def inventory(self, identifier, revision_id=None, configuration_id=None):
+        from ..profile_inventory import build_inventory
+
+        return build_inventory(self.store.get(identifier), revision_id=revision_id,
+                               configuration_id=configuration_id)
 
     def create(self, data):
         return self.store.create(data.get("name", ""), data.get("description", ""))

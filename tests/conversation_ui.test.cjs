@@ -10,10 +10,19 @@ const vm = require("node:vm");
 const flush = () => new Promise(setImmediate);
 function walk(node) { return [node, ...node.children.flatMap(walk)]; }
 
-function harness() {
+function harness({ supported = false, permission = "default", permissionResult = "granted", focused = false } = {}) {
   const nodes = new Map();
   const requests = [];
   const responses = new Map();
+  const rectangles = new Map();
+  const notifications = [];
+  let permissionRequests = 0;
+  class FakeNotification {
+    static permission = permission;
+    static async requestPermission() { permissionRequests += 1; this.permission = permissionResult; return permissionResult; }
+    constructor(title, options) { this.title = title; this.options = options; notifications.push(this); }
+    close() { this.closed = true; }
+  }
   class Node {
     constructor(tag) {
       this.tagName = tag; this.children = []; this.attributes = {}; this.dataset = {}; this.listeners = {};
@@ -34,6 +43,7 @@ function harness() {
     focus() { this.focused = true; }
     scrollIntoView() { this.scrolled = true; }
     reportValidity() { return true; }
+    getBoundingClientRect() { return rectangles.get(this.id) || this.rect || { top: 10, bottom: 110, left: 10, right: 410, width: 400, height: 100 }; }
   }
   const document = {
     createElement: (tag) => new Node(tag),
@@ -41,11 +51,13 @@ function harness() {
     getElementById: (id) => [...nodes.values()].flatMap(walk).find((node) => node.id === id) || null,
     querySelector: (selector) => { if (!nodes.has(selector)) nodes.set(selector, new Node("div")); return nodes.get(selector); },
     querySelectorAll: () => [],
+    visibilityState: "visible",
+    hasFocus: () => focused,
   };
   const context = vm.createContext({
     document, URLSearchParams, location: { hash: "", pathname: "/" },
     sessionStorage: { getItem: (key) => key === "harness2_token" ? "fixture-token" : null, setItem() {} },
-    history: {}, window: { scrollTo() {} }, clearTimeout() {}, setTimeout: () => 1,
+    history: {}, window: { scrollTo() {}, focus() { focused = true; }, innerWidth: 800, innerHeight: 900, ...(supported ? { Notification: FakeNotification } : {}) }, clearTimeout() {}, setTimeout: () => 1,
     fetch: async (url, options) => {
       requests.push({ url, method: options.method || "GET", body: JSON.parse(options.body || "{}") });
       const response = responses.get(url);
@@ -59,6 +71,9 @@ function harness() {
     renderConversations, renderConversationDetail, renderConversationRecovery, createConversation, talkToProfile,
     conversationAction, sendConversationMessage, loadConversation, selectConversation, renderProfileDetail,
     formParams, renderConversationOption, conversationOptionAllowed, renderRunProfileCapture,
+    renderConversationAttention, processConversationNotifications, setConversationNotifications,
+    markVisibleConversationRead, visibleAssistantIds, cacheConversation,
+    openStudioBrowser,
     setState(value) { state = value; view = "conversations"; },
     setView(value) { view = value; },
     select(value) { selectedConversationId = value.id; conversationCache.set(value.id, value); },
@@ -66,7 +81,10 @@ function harness() {
     cached(id) { return conversationCache.get(id); },
     draft(id,value) { conversationDrafts.set(id,value); },
   };\n})();`, context);
-  return { ui: context.ui, node: document.querySelector, requests, respond: (url, value) => responses.set(url, value) };
+  return { ui: context.ui, node: document.querySelector, requests, notifications,
+    permissionRequests: () => permissionRequests, focus: (value) => { focused = value; },
+    rect: (id, value) => rectangles.set(id, value),
+    respond: (url, value) => responses.set(url, value) };
 }
 function profile() {
   return { id: "owen", name: "Owen", active_configuration_id: "config", active_revision_id: "baseline",
@@ -245,4 +263,167 @@ test("ambiguous delivery is visible as possible human contact rather than a soli
   assert.match(detail, /1 message delivery unconfirmed/);
   assert.match(detail, /Human contact may have occurred/);
   assert.match(detail, /cannot be treated as having no human contact/);
+});
+
+function attention(id, origin = "model_initiated") {
+  return { id, role: "assistant", origin, text: `Visible post ${id}`, reply_to: origin === "reply" ? ["human-source"] : [], created_at: "2026-10-19T12:00:00Z" };
+}
+function setupAttention(fixture, { enabled = true, messages = [] } = {}) {
+  const state = setup(fixture);
+  state.notifications = { enabled, unread_count: messages.length };
+  state.conversations[0].unread_count = messages.length;
+  state.conversations[0].attention_messages = messages;
+  return state;
+}
+
+test("unsupported notifications keep unread badges and offer an explicit default-browser fallback", async () => {
+  const fixture = harness(); setupAttention(fixture, { enabled: false, messages: [attention("old")] });
+  fixture.ui.renderConversationAttention();
+  assert.equal(fixture.node("#nav-conversation-unread").textContent, "1");
+  assert.equal(fixture.node("#nav-conversation-unread").hidden, false);
+  const panel = fixture.node("#conversation-notifications");
+  assert.match(panel.textContent, /This browser does not offer desktop notifications/);
+  const enable = walk(panel).find((node) => node.tagName === "button" && node.textContent === "Enable desktop notifications");
+  assert.equal(enable.disabled, true); assert.equal(fixture.requests.length, 0);
+  fixture.respond("/api/open-browser", { opened: true });
+  const fallback = walk(panel).find((node) => node.tagName === "button" && node.textContent === "Open Studio in my browser");
+  await fallback.fire("click");
+  assert.deepEqual(fixture.requests[0], { url: "/api/open-browser", method: "POST", body: {} });
+  assert.equal(fixture.permissionRequests(), 0);
+});
+
+test("notification permission is requested only by explicit enable and is saved after permission", async () => {
+  const fixture = harness({ supported: true }); setupAttention(fixture, { enabled: false });
+  fixture.ui.renderConversationAttention(); assert.equal(fixture.permissionRequests(), 0); assert.equal(fixture.requests.length, 0);
+  fixture.respond("/api/notifications/settings", () => {
+    assert.equal(fixture.permissionRequests(), 1);
+    return { enabled: true, unread_count: 0 };
+  });
+  await fixture.ui.setConversationNotifications(true);
+  assert.equal(fixture.permissionRequests(), 1);
+  assert.deepEqual(fixture.requests[0].body, { enabled: true });
+  assert.match(fixture.node("#conversation-notifications").textContent, /Desktop notifications are enabled/);
+  const details = walk(fixture.node("#conversation-notifications")).find((node) => node.id === "conversation-notification-details");
+  assert.equal(details.children[0].textContent, "Notification details"); assert.equal(details.open, false);
+  assert.match(details.textContent, /brief excerpt.*outside Studio/);
+  details.open = true; fixture.ui.renderConversationAttention();
+  assert.equal(walk(fixture.node("#conversation-notifications")).find((node) => node.id === "conversation-notification-details").open, true, "Polling preserves the open details disclosure");
+  assert.equal(fixture.notifications.length, 0);
+});
+
+test("saving the workspace notification preference preserves unread counts returned separately", async () => {
+  const fixture = harness({ supported: true, permission: "granted" });
+  setupAttention(fixture, { enabled: false, messages: [attention("one"), attention("two")] });
+  fixture.respond("/api/notifications/settings", { enabled: true });
+  await fixture.ui.setConversationNotifications(true);
+  assert.equal(fixture.node("#nav-conversation-unread").textContent, "2");
+  assert.equal(fixture.notifications.length, 0);
+});
+
+test("denied permission leaves preferences unchanged and unread messages usable", async () => {
+  const fixture = harness({ supported: true, permissionResult: "denied" }); setupAttention(fixture, { enabled: false, messages: [attention("unread")] });
+  await fixture.ui.setConversationNotifications(true);
+  assert.equal(fixture.requests.length, 0); assert.equal(fixture.notifications.length, 0);
+  assert.equal(fixture.node("#nav-conversation-unread").textContent, "1");
+  assert.match(fixture.node("#conversation-notifications").textContent, /permission was not granted/);
+  const fallback = walk(fixture.node("#conversation-notifications")).find((node) => node.tagName === "button" && node.textContent === "Open Studio in my browser");
+  assert.ok(fallback, "An embedded browser may deny permission without exposing site settings");
+  fixture.respond("/api/open-browser", { opened: true }); await fallback.fire("click");
+  assert.deepEqual(fixture.requests[0], { url: "/api/open-browser", method: "POST", body: {} });
+  assert.equal(fixture.permissionRequests(), 1, "Opening the browser does not request permission again");
+});
+
+test("first load avoids backlog; only subsequent explicit model-initiated posts attempt notifications", async () => {
+  const fixture = harness({ supported: true, permission: "granted" });
+  const state = setupAttention(fixture, { messages: [attention("historical")] });
+  fixture.ui.renderConversationAttention(); await flush();
+  assert.equal(fixture.notifications.length, 0); assert.equal(fixture.requests.length, 0);
+  state.conversations[0].attention_messages.push(attention("new"), attention("reply", "reply"), attention("legacy", "legacy"), { ...attention("user"), role: "user" });
+  fixture.respond("/api/notifications/claim", { claimed: true });
+  fixture.ui.renderConversationAttention(); await flush();
+  assert.equal(fixture.notifications.length, 1); assert.match(fixture.notifications[0].options.body, /Visible post new/);
+  assert.deepEqual(fixture.requests.map((request) => request.body), [{ conversation_id: "chat-one", message_id: "new" }]);
+  fixture.ui.renderConversationAttention(); await flush(); assert.equal(fixture.notifications.length, 1);
+  assert.ok(fixture.requests.every((request) => !request.url.endsWith("/read")), "Showing a notification never marks it read");
+});
+
+test("focused current conversation suppresses notifications while another view permits them", async () => {
+  const fixture = harness({ supported: true, permission: "granted", focused: true }); const state = setupAttention(fixture);
+  fixture.ui.renderConversationAttention();
+  state.conversations[0].attention_messages.push(attention("focused"));
+  fixture.ui.renderConversationAttention(); await flush(); assert.equal(fixture.requests.length, 0);
+  fixture.ui.setView("profiles"); state.conversations[0].attention_messages.push(attention("elsewhere"));
+  fixture.respond("/api/notifications/claim", { claimed: true });
+  fixture.ui.renderConversationAttention(); await flush(); assert.equal(fixture.notifications.length, 1);
+});
+
+test("atomic server claims prevent duplicate browser attempts across two windows", async () => {
+  const left = harness({ supported: true, permission: "granted" }); const right = harness({ supported: true, permission: "granted" });
+  const first = setupAttention(left); const second = setupAttention(right);
+  left.ui.renderConversationAttention(); right.ui.renderConversationAttention();
+  let claimed = false;
+  const claim = () => { const result = !claimed; claimed = true; return { claimed: result }; };
+  for (const [fixture, state] of [[left, first], [right, second]]) {
+    state.conversations[0].attention_messages.push(attention("same-message"));
+    fixture.respond("/api/notifications/claim", claim); fixture.ui.renderConversationAttention();
+  }
+  await flush();
+  assert.equal(left.notifications.length + right.notifications.length, 1);
+});
+
+test("only focused assistant messages actually intersecting the visible pane are marked read", async () => {
+  const fixture = harness({ focused: true }); const chat = conversation();
+  chat.messages = [{ ...attention("visible"), status: "answered", worker_id: "worker-one" }, { ...attention("outside"), status: "answered", worker_id: "worker-one" }, { id: "human", role: "user", text: "Hello", status: "answered", worker_id: "worker-one" }];
+  chat.unread_count = 2; chat.unread_message_ids = ["visible", "outside", "human"];
+  const state = setup(fixture, chat); state.notifications = { enabled: false, unread_count: 2 };
+  state.conversations[0].unread_count = 2;
+  fixture.rect("conversation-message-outside", { top: 800, bottom: 900, left: 10, right: 410, width: 400, height: 100 });
+  fixture.respond("/api/conversations/chat-one/read", { ...chat, unread_count: 1, unread_message_ids: ["outside"] });
+  fixture.ui.renderConversations(); await flush();
+  const requests = fixture.requests.filter((request) => request.url.endsWith("/read"));
+  assert.equal(requests.length, 1); assert.deepEqual(requests[0].body, { message_ids: ["visible"] });
+  assert.equal(fixture.node("#nav-conversation-unread").textContent, "1");
+  assert.match(fixture.node("#conversation-list").textContent, /1 unread/);
+});
+
+test("background and hidden conversation views do not advance read state", async () => {
+  const fixture = harness(); const chat = conversation(); chat.messages = [{ ...attention("unread"), status: "answered", worker_id: "worker-one" }]; chat.unread_message_ids = ["unread"]; chat.unread_count = 1;
+  setup(fixture, chat); fixture.ui.renderConversations(); await fixture.ui.markVisibleConversationRead(); assert.equal(fixture.requests.length, 0);
+  fixture.focus(true); fixture.ui.setView("runs"); await fixture.ui.markVisibleConversationRead(); assert.equal(fixture.requests.length, 0);
+});
+
+test("a delayed read acknowledgement cannot erase a newer human message or model reply", async () => {
+  const fixture = harness({ focused: true }); const chat = conversation();
+  const previous = { ...attention("previous"), status: "answered", worker_id: "worker-one" };
+  chat.messages = [previous]; chat.unread_count = 1; chat.unread_message_ids = [previous.id];
+  chat.attention_messages = [previous];
+  const state = setup(fixture, chat); state.notifications = { enabled: false, unread_count: 1 };
+  let acknowledge;
+  fixture.respond("/api/conversations/chat-one/read", new Promise((resolve) => { acknowledge = resolve; }));
+  fixture.ui.renderConversations();
+  assert.deepEqual(fixture.requests[0].body, { message_ids: [previous.id] });
+  const human = { id: "new-human", role: "user", text: "What changed?", status: "answered", worker_id: "worker-one" };
+  const reply = { ...attention("new-reply", "reply"), reply_to: [human.id], status: "answered", worker_id: "worker-one" };
+  fixture.respond("/api/conversations/chat-one/messages", { ...chat, messages: [previous, human, reply], unread_count: 2, unread_message_ids: [previous.id, reply.id], attention_messages: [previous, reply] });
+  await fixture.ui.conversationAction(chat.id, "messages", { text: human.text });
+  acknowledge({ ...chat, unread_count: 0, unread_message_ids: [], attention_messages: [] });
+  await flush();
+  const current = fixture.ui.cached(chat.id);
+  assert.deepEqual(Array.from(current.messages, (item) => item.id), [previous.id, human.id, reply.id]);
+  assert.deepEqual(Array.from(current.unread_message_ids), [reply.id]);
+  assert.equal(current.unread_count, 1);
+  assert.equal(fixture.node("#nav-conversation-unread").textContent, "1");
+  assert.match(fixture.node("#conversation-messages").textContent, /What changed\?/);
+  assert.match(fixture.node("#conversation-messages").textContent, /Visible post new-reply/);
+});
+
+test("clicking a model notification opens that exact conversation without starting a model", async () => {
+  const fixture = harness({ supported: true, permission: "granted" }); const state = setupAttention(fixture);
+  fixture.ui.renderConversationAttention(); state.conversations[0].attention_messages.push(attention("click"));
+  fixture.respond("/api/notifications/claim", { claimed: true });
+  fixture.ui.renderConversationAttention(); await flush();
+  fixture.notifications[0].onclick(); await flush();
+  assert.equal(fixture.notifications[0].closed, true);
+  assert.ok(fixture.requests.some((request) => request.url === "/api/conversations/chat-one" && request.method === "GET"));
+  assert.ok(fixture.requests.every((request) => !request.url.endsWith("/start")));
 });

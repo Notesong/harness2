@@ -115,6 +115,15 @@ it. Active and retired describe use; observed, suspected, replicated, and
 transferred describe supporting evidence. See [PROFILES.md](PROFILES.md) for
 the storage boundaries, identity limits, and Owen's historical import.
 
+**Current capabilities** explains the profile's active configuration and harness:
+its always-on guidance, technical memory file, custom skills, subagents, scripts,
+and plugins. **Runtime tools and conditions** lists the pinned OpenCode tools
+separately, including tools that depend on configuration or remote services.
+An empty custom group does not mean OpenCode has no built-in tools. The inventory
+reads saved metadata; it does not probe a running model, execute files, demonstrate
+expertise, or change the active selection. **Permissions and practical limits**
+also explains that application permission checks do not sandbox host shell commands.
+
 ## Keep capabilities available for later
 
 **Capabilities** opens the workspace's shared component catalog. It starts off,
@@ -153,6 +162,23 @@ Use the run's stop control during work. An idle chat has its own stop control
 and disconnects after ten minutes without activity, unloading its owned model.
 **Continue chat** explicitly reconnects its retained session. See
 [CONVERSATIONS.md](CONVERSATIONS.md) for lifecycle, storage, and evidence limits.
+
+Unread counts appear beside **Conversations** and in its conversation list.
+They survive Studio restarts. Messages are marked read when their entries are
+visible in the focused conversation; fetching or opening background history does
+not clear everything. The notification panel offers **Enable desktop notifications**
+and **Turn notifications off**. Permission is requested only after your click.
+Supported browsers can alert you to new model-initiated posts outside the focused
+conversation; replies and working-record updates do not trigger alerts. Existing
+backlog stays unread without generating a burst of notifications. Alerts include
+a brief excerpt of the visible message.
+
+Keep Studio open in the browser for these alerts. Browser and operating-system
+permissions still apply, and an alert attempt does not establish that it was
+displayed or read. If an embedded browser does not support notifications, use
+**Open Studio in my browser**; unread counts remain usable either way. A changed
+local address may require **Allow in this browser** again. Clicking a notification
+opens that conversation's saved history and does not load a model.
 
 ## Follow, stop, and resume
 

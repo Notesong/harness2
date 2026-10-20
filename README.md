@@ -116,12 +116,16 @@ demo, model setup, experiment controls, readable reports, run history, and resul
 Studio's **Profiles** keep each model's configurations, harness ancestry,
 experience, and run history independent. Candidates can be tested without
 adoption, simplified, retired, or explicitly borrowed; see [model profiles](docs/PROFILES.md).
+Each profile's **Current capabilities** explains its saved harness components,
+runtime tools and conditions, and application permissions without loading a model.
 The optional [capability catalog](docs/CAPABILITIES.md) shares selected components
 with provenance. It starts disabled; model reference access is a separate profile opt-in.
 Opt-in [conversations](docs/CONVERSATIONS.md) connect to the actual working
 OpenCode session, with recorded delivery and decision ancestry. Conversation
 during work requires Windows and starts off; idle chat uses an explicit model connection and unloads
 its owned model after inactivity.
+Unread messages remain available across restarts. Optional desktop notifications
+can alert you to new model-initiated posts while Studio is open in a supported browser.
 
 Use **Windows or Linux, Python 3.12, and [uv](https://docs.astral.sh/uv/getting-started/installation/)**.
 On Windows, run these commands in PowerShell from the repository root:

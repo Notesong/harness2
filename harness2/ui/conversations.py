@@ -64,6 +64,9 @@ class Conversations:
     def __init__(self, workspace, jobs):
         self.workspace, self.jobs = workspace, jobs
         self.store = ConversationStore(workspace.root)
+        from .attention import Attention
+
+        self.attention = Attention(workspace, self.store)
         self.lock = threading.RLock()
         self._idle: _Idle | None = None
         self._statuses = {}
@@ -129,6 +132,7 @@ class Conversations:
         view["pending_count"] = sum(message["role"] == "user" and message["status"] in ("queued", "delivered")
                                     for message in view["messages"])
         view["conversational_memory"] = self.store.memory(view["profile_id"])
+        view.update(self.attention.decorate(view))
         return view
 
     def get(self, identifier):
@@ -140,6 +144,8 @@ class Conversations:
             result = []
             for summary in self.store.list():
                 view = self.store.get(summary["id"])
+                attention = self.attention.decorate(view)
+                summary.update({key: attention[key] for key in ("unread_count", "attention_messages")})
                 summary.update(runtime=self._runtime(view), pending_count=sum(
                     message["role"] == "user" and message["status"] in ("queued", "delivered")
                     for message in view["messages"]))
@@ -394,6 +400,12 @@ class Conversations:
     def command(self, identifier, action, data):
         if not isinstance(data, dict):
             raise ValueError("Conversation input should be an object.")
+        if action == "read":
+            if set(data) != {"message_ids"}:
+                raise ValueError("Choose explicit visible message IDs to mark read.")
+            with self._locked():
+                self.attention.read(identifier, data["message_ids"])
+                return self._get(identifier)
         if action == "start":
             return self._start(identifier)
         if action == "stop":

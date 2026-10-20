@@ -57,6 +57,38 @@ or a context switch, undelivered messages are not silently replayed to another
 worker. Drafts stay in the current open page while the selected conversation
 is polled; they are separate from messages that have been sent.
 
+## Unread messages and optional notifications
+
+The sidebar and conversation list show unread assistant messages, including
+replies and explicit model posts. Read state is saved separately under
+`.harness2-ui/conversation-attention/`; it survives app restarts and does not
+change conversation ancestry, working continuity, or model learning. Only entries
+visible in the focused conversation are marked read. A later message that arrives
+during that update stays unread.
+
+Desktop notifications start off. **Enable desktop notifications** asks the
+browser for permission after your click. When enabled, newly observed
+model-initiated posts can alert you outside the focused conversation. Human
+messages, replies, delivery changes, decisions, and checkpoints do not trigger
+these alerts. An alert includes the profile/conversation title and a brief
+excerpt of the visible message. Classification uses the native assistant turn: an explicit post
+under the formal task is distinguished from one replying to a delivered human
+message. Older records without that native evidence remain unclassified for
+notification purposes; they can still be unread.
+
+Enabling notifications or reopening Studio does not replay the existing backlog
+as desktop alerts. The workspace records at most one notification attempt per
+eligible message, including across browser windows and app restarts. An attempt
+does not confirm operating-system display or human receipt; unread state remains
+independent. Clicking an alert opens its conversation, without starting a model.
+
+Studio and its browser page must remain open. Browser support, site permission,
+and operating-system notification settings apply. Unsupported or blocked browsers
+keep unread counts available. **Open Studio in my browser** can open the same
+workspace in the default browser; **Allow in this browser** requests permission
+for that address. A different local port after restart can require new browser
+permission even when the workspace preference is still enabled.
+
 An accepted request can reach the native session even when its receipt cannot
 be confirmed. Such a message keeps an explicit unconfirmed-delivery reason and
 is not automatically resent. Provenance records confirmed delivery separately
@@ -130,6 +162,13 @@ disk space after model RAM has been released. Native session data can contain
 task material and internal runtime records beyond the visible conversation.
 It is not exported as public conversation history or copied into profile
 experience.
+
+These context and storage boundaries are application rules, not an operating-system
+sandbox. OpenCode's external-directory permissions do not confine arbitrary shell
+commands. Shell commands, helper scripts, and plugins run with the Studio user's
+OS permissions. Session and source-ID checks preserve normal transport ancestry;
+they do not protect the archive from code deliberately running with that same
+account's filesystem access.
 
 Back up the conversation archive and its matching private runtime together if
 you need native continuation, along with the relevant profile and run folders.

@@ -188,7 +188,11 @@ class ConversationStore:
                         or message["worker_id"] != data["worker_id"]):
                     raise ValueError("An answer must reference delivered messages for this worker.")
                 message.update(status="answered", answered_by=data["id"], updated_at=event["time"])
-            view["messages"].append({**data, **stamp, "status": "answered", "updated_at": event["time"]})
+            origin = data.get("origin", "reply" if data["reply_to"] else "legacy")
+            if origin not in {"model_initiated", "reply", "legacy"} or origin == "model_initiated" and data["reply_to"]:
+                raise ValueError("Invalid visible message origin.")
+            view["messages"].append({**data, **stamp, "origin": origin,
+                                     "status": "answered", "updated_at": event["time"]})
         elif action == "worker_ended":
             worker = cls._known_worker(view, data["worker_id"])
             worker.update(status="ended", reason=data["reason"], ended_at=event["time"])
@@ -335,17 +339,19 @@ class ConversationStore:
             self._append_history(conversation_id, view, history, "message_transitioned", data)
             return self._state(conversation_id)[0]
 
-    def assistant(self, conversation_id, text, *, worker_id, session_message_id="", reply_to=()):
+    def assistant(self, conversation_id, text, *, worker_id, session_message_id="", reply_to=(), origin=None):
         data = {"id": uuid.uuid4().hex, "role": "assistant",
                 "text": _text(text, "visible assistant message", MAX_MESSAGE, empty=False),
                 "worker_id": _worker(worker_id, empty=False),
                 "session_message_id": _text(session_message_id, "native message ID", 512),
-                "reply_to": _identifiers(reply_to, "answer references")}
+                  "reply_to": _identifiers(reply_to, "answer references"),
+                  "origin": origin or ("reply" if reply_to else "legacy")}
         with self._archive._locked():
             view, history, _ = self._state(conversation_id)
             if session_message_id:
                 prior = next((message for message in view["messages"] if message["role"] == "assistant"
-                              and message["worker_id"] == worker_id
+                              and (message["worker_id"] == worker_id or
+                                   re.fullmatch(r"tool:[a-f0-9]{32}", session_message_id))
                               and message["session_message_id"] == session_message_id), None)
                 if prior:
                     if (prior["text"] != data["text"]
@@ -380,6 +386,8 @@ class ConversationStore:
 
     @classmethod
     def _validate_decision(cls, view, data):
+        if "request_id" in data:
+            _conversation_id(data["request_id"])
         if data["worker_id"]:
             cls._known_worker(view, data["worker_id"])
         for message_id in data["source_message_ids"]:
@@ -395,23 +403,30 @@ class ConversationStore:
             raise ValueError("Revising or reverting needs the earlier decision ID.")
 
     def record_decision(self, conversation_id, *, text, why, source_message_ids, status="proposed",
-                        supersedes_id=None, worker_id=""):
+                        supersedes_id=None, worker_id="", request_id=None):
         data = {"id": uuid.uuid4().hex, "text": _text(text, "decision", 8_192, empty=False),
                 "why": _text(why, "decision explanation", 8_192, empty=False),
                 "source_message_ids": _identifiers(source_message_ids, "source messages"),
                 "status": _text(status, "decision status", 32, empty=False),
                 "supersedes_id": supersedes_id, "worker_id": _worker(worker_id),
                 "qualification": "Declared conversational influence; benefit is not established."}
+        if request_id is not None:
+            data["request_id"] = _conversation_id(request_id)
         if supersedes_id is not None:
             _conversation_id(supersedes_id)
         with self._archive._locked():
             view, _, working = self._state(conversation_id)
             self._validate_decision(view, data)
+            previous = self._working_replay(working, "decision_recorded", data)
+            if previous is not None:
+                return previous
             self._append_working(conversation_id, working, "decision_recorded", data)
             return next(item for item in self._state(conversation_id)[0]["decisions"] if item["id"] == data["id"])
 
     @classmethod
     def _validate_checkpoint(cls, view, data):
+        if "request_id" in data:
+            _conversation_id(data["request_id"])
         if data["worker_id"]:
             cls._known_worker(view, data["worker_id"])
         known = {decision["id"] for decision in view["decisions"]}
@@ -425,8 +440,29 @@ class ConversationStore:
             raise ValueError("A working continuity record exceeds its context budget.")
         self._archive._append(self._directory(conversation_id) / "working", events, action, data)
 
+    def has_request(self, conversation_id, request_id):
+        _conversation_id(request_id)
+        with self._archive._locked():
+            _, _, working = self._state(conversation_id)
+            return any(event["data"].get("request_id") == request_id for event in working)
+
+    @staticmethod
+    def _working_replay(events, action, data):
+        """Recover a committed tool result when its acknowledgement was lost."""
+        request_id = data.get("request_id")
+        if request_id is None:
+            return None
+        prior = next((event for event in events if event["data"].get("request_id") == request_id), None)
+        if prior is None:
+            return None
+        def payload(item):
+            return {key: value for key, value in item.items() if key not in ("id", "worker_id")}
+        if prior["action"] != action or _json(payload(prior["data"])) != _json(payload(data)):
+            raise ValueError("A committed conversation tool request cannot change its payload.")
+        return {**prior["data"], "created_at": prior["time"], "event_id": prior["id"]}
+
     def checkpoint(self, conversation_id, *, objective="", constraints=(), completed=(), planned=(),
-                   open_questions=(), decision_ids=(), worker_id=""):
+                   open_questions=(), decision_ids=(), worker_id="", request_id=None):
         completed = _sequence(completed, "completion claims")
         claims = []
         for item in completed:
@@ -442,9 +478,14 @@ class ConversationStore:
                 "planned": _strings(planned, "planned work"), "open_questions": _strings(open_questions, "open questions"),
                 "decision_ids": _identifiers(decision_ids, "recovery decision references"), "worker_id": _worker(worker_id),
                 "completion_qualification": "Completion is model-reported; supplied references are not independently verified."}
+        if request_id is not None:
+            data["request_id"] = _conversation_id(request_id)
         with self._archive._locked():
             view, _, working = self._state(conversation_id)
             self._validate_checkpoint(view, data)
+            previous = self._working_replay(working, "checkpoint_recorded", data)
+            if previous is not None:
+                return previous
             self._append_working(conversation_id, working, "checkpoint_recorded", data)
             return self._state(conversation_id)[0]["recovery"]
 

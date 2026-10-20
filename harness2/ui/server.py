@@ -20,7 +20,7 @@ import urllib.request
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import quote, urlsplit
+from urllib.parse import parse_qs, quote, urlsplit
 
 from .. import config
 from ..locking import file_lock
@@ -51,6 +51,7 @@ class App:
             if active_id:
                 active = self.jobs.get(active_id)
                 jobs = [active if row["id"] == active["id"] else row for row in jobs]
+        conversations = self.conversations.list()
         return {
             "workspace": str(self.workspace.root),
             "runs_root": str(self.workspace.runs_root),
@@ -62,7 +63,9 @@ class App:
             "active_id": active_id,
             "profiles": self.profiles.list(),
             "capabilities": self.capabilities.state(),
-            "conversations": self.conversations.list(),
+            "conversations": conversations,
+            "notifications": {**self.conversations.attention.state(),
+                              "unread_count": sum(row["unread_count"] for row in conversations)},
             "features": {"conversation_runs": os.name == "nt"},
         }
 
@@ -211,6 +214,14 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"ok": True, "workspace": str(self.server.app.workspace.root)})
             elif path == "/api/state":
                 self._json(self.server.app.state())
+            elif path.startswith("/api/profiles/") and path.endswith("/inventory"):
+                parts = path.strip("/").split("/")
+                query = parse_qs(urlsplit(self.path).query, keep_blank_values=True)
+                if len(parts) != 4 or set(query) - {"revision_id", "configuration_id"} or any(len(v) != 1 for v in query.values()):
+                    raise ValueError("Choose one saved configuration and revision for this inventory.")
+                self._json(self.server.app.profiles.inventory(parts[2],
+                    revision_id=query.get("revision_id", [None])[0],
+                    configuration_id=query.get("configuration_id", [None])[0]))
             elif path.startswith("/api/profiles/") and len(path.strip("/").split("/")) == 3:
                 self._json(self.server.app.profiles.get(path.rsplit("/", 1)[1]))
             elif path.startswith("/api/capabilities/") and len(path.strip("/").split("/")) == 3:
@@ -263,7 +274,11 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError("Expected a JSON object.")
             path = urlsplit(self.path).path
             app = self.server.app
-            if path == "/api/conversations":
+            if path == "/api/notifications/settings":
+                self._json(app.conversations.attention.settings(data))
+            elif path == "/api/notifications/claim":
+                self._json(app.conversations.attention.claim(data))
+            elif path == "/api/conversations":
                 self._json(app.conversations.create(data), 201)
             elif path.startswith("/api/conversations/"):
                 parts = path.strip("/").split("/")
@@ -321,6 +336,11 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(saved)
             elif path == "/api/connection":
                 self._json(app.connection(data))
+            elif path == "/api/open-browser":
+                if data:
+                    raise ValueError("Opening Studio does not accept an external address.")
+                self._json({"opened": bool(webbrowser.open(
+                    f"http://127.0.0.1:{self.server.server_port}/#token={app.token}", new=2))})
             elif path == "/api/open-folder":
                 self._json(app.open_folder(data))
             elif path == "/api/shutdown":

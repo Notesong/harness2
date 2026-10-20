@@ -154,6 +154,8 @@ class SessionBridge:
         self._state_lock = threading.RLock()
         self._wait_for_initial = wait_for_initial
         self._worker_started = False
+        self._native_inputs = {}
+        self._inputs_primed = False
 
     def _recovery(self):
         view = self.store.get(self.conversation_id)
@@ -197,7 +199,9 @@ class SessionBridge:
             self.client.close()
             raise
 
-    def _tool_requests(self):
+    def _tool_requests(self, native_messages=None):
+        if native_messages is not None:
+            self._remember_inputs(native_messages)
         requests = config.long_path(self.outbox / "requests")
         if not requests.is_dir():
             return
@@ -218,9 +222,22 @@ class SessionBridge:
                     raise ValueError("The tool request belongs to another session.")
                 kind = request.get("kind")
                 if kind == "message":
+                    origin = "legacy"
+                    if native_messages is not None:
+                        native = next((item["info"] for item in native_messages
+                                       if item.get("info", {}).get("id") == request.get("native_message_id")
+                                       and item["info"].get("role") == "assistant"), None)
+                        if native and native.get("parentID"):
+                            view = self.store.get(self.conversation_id)
+                            human = {item.get("session_message_id") for item in view["messages"]
+                                     if item["role"] == "user" and item.get("session_message_id")}
+                            source = self._native_inputs.get(native["parentID"])
+                            origin = ("reply" if native["parentID"] in human or source == "human"
+                                      else "model_initiated" if source == "formal" else "legacy")
                     result = self.store.assistant(
                         self.conversation_id, _redact(request.get("text", ""), self.environment),
                         worker_id=self.worker_id, session_message_id="tool:" + path.stem,
+                        origin=origin,
                     )
                 elif kind == "decision":
                     self._check_update(request)
@@ -231,6 +248,7 @@ class SessionBridge:
                         source_message_ids=request.get("source_message_ids", []),
                         status=request.get("status", "proposed"),
                         supersedes_id=request.get("supersedes_id"),
+                        request_id=path.stem,
                     )
                     self._recovery()
                 elif kind == "checkpoint":
@@ -238,6 +256,7 @@ class SessionBridge:
                     keys = ("objective", "constraints", "completed", "planned", "open_questions", "decision_ids")
                     result = self.store.checkpoint(
                         self.conversation_id, worker_id=self.worker_id,
+                        request_id=path.stem,
                         **{key: request[key] for key in keys if key in request},
                     )
                     self._recovery()
@@ -254,7 +273,35 @@ class SessionBridge:
             except (OSError, ValueError, KeyError, TypeError) as exc:
                 write_json(reply, {"ok": False, "error": _redact(str(exc), self.environment)[:1000]})
 
+    def _remember_inputs(self, native_messages):
+        # A stored user ID is not guaranteed after an ambiguous send receipt.
+        # Recognize the injected human wrapper as well, and retain formal input
+        # identities when a long task moves beyond the bounded native page.
+        if not self._inputs_primed:
+            for event in self.store.get(self.conversation_id)["observations"]:
+                detail = event.get("detail", {})
+                if (event["kind"] == "native_input" and detail.get("session_id") == self.client.session_id
+                        and detail.get("origin") in {"human", "formal"}):
+                    self._native_inputs[detail["message_id"]] = detail["origin"]
+            self._inputs_primed = True
+        for message in native_messages:
+            info = message.get("info", {})
+            identifier = info.get("id")
+            if info.get("role") != "user" or not identifier or identifier in self._native_inputs:
+                continue
+            wrapped = any(part.get("type") == "text" and isinstance(part.get("text"), str)
+                          and part["text"].startswith("[Human conversation; source_message_id=")
+                          for part in message.get("parts", []))
+            origin = "human" if wrapped else "formal"
+            self.store.record_event(self.conversation_id, "native_input", {
+                "session_id": self.client.session_id, "message_id": identifier, "origin": origin,
+            }, worker_id=self.worker_id)
+            self._native_inputs[identifier] = origin
+
     def _check_update(self, request):
+        if self.store.has_request(self.conversation_id, request["request_id"]):
+            # Store replay validation still checks the exact original payload.
+            return
         # Reject before committing if the next record could exhaust recovery.
         # Leave room for archive-generated identities/timestamps/qualification.
         value = read_json(self.recovery_file)
@@ -364,8 +411,9 @@ class SessionBridge:
         errors = 0
         while not self.stop_event.is_set():
             try:
-                self._tool_requests()
-                self._answers(self.client.messages())
+                native_messages = self.client.messages()
+                self._tool_requests(native_messages)
+                self._answers(native_messages)
                 self._deliver()
                 errors = 0
             except (OSError, ValueError, KeyError, TypeError) as exc:

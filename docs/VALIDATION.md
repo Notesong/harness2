@@ -515,7 +515,7 @@ CP1252 output decoding assumption and corrected rerun are retained locally.
 
 ### Conversational sidecar validation boundaries
 
-The final native Windows suite passed **346 tests** (two
+The initial conversational checkpoint's native Windows suite passed **346 tests** (two
 platform-specific skips), and **39 Node view tests** passed. A policy
 check restricts conversation-enabled benchmark runs to Windows: POSIX phase
 cancellation does not contain the bridge's separate native process groups.
@@ -575,6 +575,44 @@ unchanged. The local report and visible conversation are retained under
 `.tmp/cp-222310/`. This two-message check did not exercise a conversational
 JobBench workflow, model-written decision/checkpoint records, model-backed
 compaction, or any improvement in task performance.
+
+The notification/inventory follow-up adds archive regressions for tool-message
+retries across worker restarts, canonical decision/checkpoint request replay,
+changed-payload rejection, and preserving a later checkpoint when an older
+acknowledgement is retried. Runtime fixtures classify explicit posts using native
+assistant-parent identities and verify that a tool reply does not prematurely
+complete a human turn. Lost acknowledgements are replayed with a recovery record
+above 30 KB without duplicating records or bypassing changed-payload validation.
+These checks use real temporary archives with a substituted native client.
+
+A new integration proof used the actual pinned Bun/OpenCode server, attached
+CLI, and plugin with six **scripted provider calls**. An explicit post under the
+native formal-task turn was archived as model-initiated; notification attention
+had been enabled before that post. Its claim succeeded once and left the message
+unread. The native reply to a delivered human message was classified as a reply
+and was ineligible for an alert. Reopening attention state preserved the claim
+and unread records. The same proof exercised tool acknowledgements, forced
+compaction, and exact-session continuation, then closed every owned process.
+Relevant production source hashes matched before and after the proof. Evidence
+is retained at `.tmp/native-attention-proof-20261019-231236/report.json`.
+This validates native integration and notification bookkeeping with scripted
+output; it did not display a browser or operating-system notification.
+
+The profile inventory is a projection of saved files and the pinned OpenCode
+source catalog. It does not execute profile components or probe effective tools,
+remote services, shell confinement, or model expertise. Notification attempts
+and unread bookkeeping likewise do not establish OS display or human receipt.
+The earlier real Qwen continuity check predates these additions; it does not
+validate model-initiated notification behavior or the inventory's runtime tool
+conditions. No additional model inference was used for this follow-up.
+
+The follow-up passed **377 native Windows tests** (two platform skips) and
+**52 Node UI tests**. A fresh offline wheel install verified 66 Python modules,
+three UI assets, 50 third-party files, 48 provenance digests, and eight license
+files. Installed inventory/attention fixtures and the deterministic demo/resume
+passed without model calls. The wheel SHA256 was
+`aad0996f967b614e72000ab9ba5573fce74c9fa50519f885bcb5b30ac2d45eef`;
+reports and the source manifest are in `.tmp/notifications-wheel-proof/`.
 
 From the checkout, with its development virtual environment installed:
 

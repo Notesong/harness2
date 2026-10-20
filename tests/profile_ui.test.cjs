@@ -62,7 +62,7 @@ function harness() {
   const boot = source.indexOf("  $$('[data-view]').forEach");
   assert.ok(boot > 0, "Find the app boot boundary");
   vm.runInContext(source.slice(0, boot) + `globalThis.ui = {
-    renderProfileDetail, renderProfileRevisions, renderExperimentProfile, renderRunProfileCapture,
+    renderProfileDetail, renderProfileRevisions, renderExperimentProfile, renderRunProfileCapture, renderProfileInventory,
     formParams, experimentSettings, profileAction, revisionFiles, runHarnessChoices, renderProfiles,
     setState(value) { state = value; },
     cache(value) { profileCache.set(value.id, value); },
@@ -230,4 +230,45 @@ test("preview starting points stay planned and show exact configuration and harn
   assert.match(view.textContent, /planned starting point/);
   assert.match(view.textContent, /Configuration older-config · harness older-revision/);
   assert.doesNotMatch(view.textContent, /recorded with run/);
+});
+
+test("current capability inventory names selected components and keeps runtime availability qualified", () => {
+  const fixture = harness(); const item = setup(fixture);
+  item.capabilities = {
+    configuration: { id: "config-one", label: "Q3 · 64K", model: "qwen-local", context: 65536, output: 8192, tool_policy_sha256: "policy-hash", association: "Saved model association." },
+    revision: { id: "baseline", label: "Own selected harness", content_sha256: "content-hash" },
+    components: { always_on: [{ path: "guardrails.md", label: "Guardrails", present: true, bytes: 120 }], skills: [], scripts: [{ path: "scripts/check.py", name: "check.py", present: true, description: "<script>Literal script description</script>" }], subagents: [], plugins: [] },
+    builtin_tools: [{ id: "bash", label: "Run shell commands", status: "runtime-dependent", qualification: "Runs as the current operating-system user." }, { id: "websearch", label: "Web search", status: "conditional", qualification: "Needs the configured remote service." }],
+    application_tools: [{ id: "harness2_conversation", label: "Conversation sidecar", status: "conditional", qualification: "Only in explicitly conversational sessions." }],
+    permissions: { os_sandbox: false, shell_confined: false, summary: "Declared application policy is not an operating-system sandbox; shell commands are not confined." },
+    runtime: { source: "Pinned source inventory; not live tool observation.", substrate: "OpenCode", version: "1.14.18" },
+    limits: ["A loaded model cannot wake itself while inference is idle.", "Catalog access requires a separate opt-in."] };
+  const view = fixture.ui.renderProfileInventory(item);
+  assert.match(view.textContent, /Current capabilities/); assert.match(view.textContent, /Own selected harness/);
+  assert.match(view.textContent, /Harness baseline/); assert.match(view.textContent, /Configuration config-one/);
+  assert.match(view.textContent, /Custom skills · 0/); assert.match(view.textContent, /Helper scripts · 1/);
+  assert.ok(view.textContent.includes("<script>Literal script description</script>"));
+  assert.match(view.textContent, /Run shell commandsRuntime Dependent/); assert.match(view.textContent, /Web searchConditional/);
+  assert.match(view.textContent, /Only in explicitly conversational sessions/);
+  assert.match(view.textContent, /not an operating-system sandbox/); assert.match(view.textContent, /shell commands are not confined/);
+  assert.match(view.textContent, /not live tool observation/); assert.match(view.textContent, /cannot wake itself/);
+  const starting = view.children.find((node) => node.className === "inventory-starting-point");
+  const provenance = starting.children.find((node) => node.tagName === "details");
+  assert.match(starting.children.filter((node) => node.tagName !== "details").map((node) => node.textContent).join(" "), /qwen-local.*65,536 context.*8,192 output/);
+  assert.equal(provenance.children[0].textContent, "Saved configuration & provenance");
+  assert.equal(Boolean(provenance.open), false); assert.match(provenance.textContent, /config-one.*content-hash.*policy-hash.*Saved model association/);
+  const scope = view.children.find((node) => node.className === "inventory-boundaries");
+  assert.equal(scope.tagName, "details"); assert.equal(Boolean(scope.open), false);
+  assert.equal(scope.children[0].textContent, "Inventory scope and permissions");
+  assert.equal((scope.textContent.match(/operating-system sandbox/g) || []).length, 1, "The backend permission summary is not repeated by a fallback");
+  assert.equal(fixture.requests.length, 0, "An inventory never loads a model or tests a tool");
+});
+
+test("an unavailable tool catalog preserves its limits without inventing enabled tools", () => {
+  const fixture = harness(); const item = setup(fixture);
+  item.capabilities = { configuration: {}, revision: {}, components: {}, builtin_tools: [], permissions: {}, limits: ["The pinned runtime changed; its tool catalog needs a fresh review."] };
+  const view = fixture.ui.renderProfileInventory(item);
+  assert.match(view.textContent, /No harness selected/); assert.match(view.textContent, /No configuration selected/);
+  assert.match(view.textContent, /pinned runtime changed/); assert.doesNotMatch(view.textContent, /Enabled|tool success confirmed/);
+  assert.equal(fixture.requests.length, 0);
 });

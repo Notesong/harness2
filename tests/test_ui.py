@@ -182,6 +182,74 @@ class UITests(unittest.TestCase):
             with self.subTest(override=override), self.assertRaises(ValueError):
                 self.app.jobs.parameters({**base, "conversation_enabled": True, **override})
 
+    def test_notification_api_marks_only_explicit_messages_and_never_loads_models(self):
+        from harness2.profiles import ProfileStore
+
+        profiles = ProfileStore(self.root)
+        profiles.create("Owen")
+        configuration = profiles.add_configuration("owen", {
+            "settings": {"provider": "local"}, "identity": {"model": "fixture"}})
+        revision = profiles.add_revision("owen", {})
+        store = self.app.conversations.store
+        identifier = store.create("owen", configuration["id"], revision["id"])["id"]
+        store.bind_worker(identifier, "worker", label="Synthetic", session_id="ses_fixture")
+        with patch("harness2.ui.conversations.ManagedLocalServer", side_effect=AssertionError("No model")):
+            for path, data in (("/api/notifications/settings", {"enabled": True}),
+                               ("/api/notifications/claim", {"conversation_id": identifier, "message_id": "a" * 32}),
+                               (f"/api/conversations/{identifier}/read", {"message_ids": []})):
+                status, _, _ = self.request("POST", path, data, authorized=False)
+                self.assertEqual(status, 401)
+                status, _, _ = self.request("POST", path, data, headers={"Origin": "https://attacker.example"})
+                self.assertEqual(status, 403)
+            status, state, _ = self.request("POST", "/api/notifications/settings", {"enabled": True})
+            self.assertEqual((status, state["enabled"]), (200, True))
+            message = store.assistant(identifier, "I found an uncertain source.", worker_id="worker", origin="model_initiated")
+            status, state, _ = self.request("GET", "/api/state")
+            self.assertEqual(state["notifications"]["unread_count"], 1)
+            self.assertEqual(state["conversations"][0]["attention_messages"][0]["id"], message["id"])
+            status, claim, _ = self.request("POST", "/api/notifications/claim", {
+                "conversation_id": identifier, "message_id": message["id"]})
+            self.assertEqual((status, claim["claimed"]), (200, True))
+            status, view, _ = self.request("POST", f"/api/conversations/{identifier}/read", {"message_ids": [message["id"]]})
+            self.assertEqual((status, view["unread_count"]), (200, 0))
+            self.assertNotIn(SECRET, json.dumps(view))
+
+    def test_default_browser_open_is_explicit_and_uses_only_this_local_studio(self):
+        with patch("harness2.ui.server.webbrowser.open", return_value=True) as launch:
+            status, _, _ = self.request("POST", "/api/open-browser", {}, authorized=False)
+            self.assertEqual(status, 401)
+            status, _, _ = self.request("POST", "/api/open-browser", {"url": "https://outside.example"})
+            self.assertEqual(status, 400)
+            launch.assert_not_called()
+            status, result, _ = self.request("POST", "/api/open-browser", {})
+            self.assertEqual((status, result["opened"]), (200, True))
+            launch.assert_called_once_with(f"http://127.0.0.1:{self.server.server_port}/#token={self.app.token}", new=2)
+
+    def test_profile_inventory_routes_are_read_only_and_use_exact_saved_selections(self):
+        from harness2.profiles import ProfileStore
+
+        profiles = ProfileStore(self.root)
+        profiles.create("Owen")
+        configuration = profiles.add_configuration("owen", {
+            "settings": {"provider": "local"}, "identity": {"model": "fixture"}})
+        revision = profiles.add_revision("owen", {"guardrails.md": "Verify sources."})
+        candidate = profiles.add_revision("owen", {"scripts/check.py": "raise Exception('MUST NOT RUN')"})
+        profiles.activate("owen", configuration_id=configuration["id"], revision_id=revision["id"])
+        before = {path: path.read_bytes() for path in profiles.root.rglob("*.json")}
+        endpoint = "/api/profiles/owen/inventory"
+        self.assertEqual(self.request("GET", endpoint, authorized=False)[0], 401)
+        with patch("harness2.ui.conversations.ManagedLocalServer", side_effect=AssertionError("No model")):
+            status, current, _ = self.request("GET", endpoint)
+            self.assertEqual(status, 200, current)
+            self.assertEqual(current["revision"]["id"], revision["id"])
+            status, selected, _ = self.request("GET", endpoint + "?revision_id=" + candidate["id"])
+            self.assertEqual(status, 200, selected)
+            self.assertEqual(selected["revision"]["id"], candidate["id"])
+            self.assertEqual(self.request("GET", endpoint + "?revision_id=../outside")[0], 400)
+            self.assertEqual(self.request("GET", endpoint + "?revision_id=a&revision_id=b")[0], 400)
+        self.assertEqual({path: path.read_bytes() for path in profiles.root.rglob("*.json")}, before)
+        self.assertNotIn(SECRET, json.dumps(selected))
+
     def test_local_profile_checks_effective_source_experiment_before_judging(self):
         record, _ = self.synthetic_record()
         record["kind"] = "benchmark"

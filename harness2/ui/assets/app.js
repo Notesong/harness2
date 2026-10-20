@@ -53,6 +53,12 @@
   let conversationLoading = false;
   let conversationBusy = false;
   const conversationVersions = new Map();
+  const attentionSeenIds = new Set();
+  const readInFlight = new Set();
+  const readConfirmedIds = new Map();
+  let notificationPrimed = false;
+  let notificationBusy = false;
+  let notificationError = "";
 
   function remember(key, value) { try { sessionStorage.setItem(key, value); } catch (_) { /* Session storage can be disabled. */ } }
   function recalled(key) { try { return sessionStorage.getItem(key); } catch (_) { return null; } }
@@ -612,11 +618,76 @@
     actions.append(start, talk, element("small", "field-help", "Talk loads the saved local model and opens its working session."));
     heading.append(title, actions);
     const note = element("p", "profile-continuity-note", "Experiments take a recorded snapshot. Changing the active configuration or harness affects future runs; the history stays intact.");
+    const inventory = renderProfileInventory(profile);
     const configurations = renderProfileConfigurations(profile);
     const revisions = renderProfileRevisions(profile);
     const ideas = renderProfileNotes(profile);
     const ancestry = renderProfileHistory(profile);
-    wrap.replaceChildren(heading, note, configurations, revisions, ideas, ancestry);
+    wrap.replaceChildren(heading, note, inventory, configurations, revisions, ideas, ancestry);
+  }
+  function renderProfileInventory(profile) {
+    const section = profileSection("Current capabilities", "Selected harness components and declared runtime tools. Availability is conditional; this is not a live capability test.");
+    const inventory = profile.capabilities;
+    if (!inventory) {
+      section.append(element("p", "field-help", "An inventory has not been returned for this profile. Its saved configurations and harness files are available below."));
+      return section;
+    }
+    const configuration = inventory.configuration || {};
+    const revision = inventory.revision || {};
+    const starting = element("div", "inventory-starting-point");
+    starting.append(element("h4", "", revision.label || "No harness selected"), element("p", "field-help", `${configuration.label || "No configuration selected"}${configuration.model ? ` · ${configuration.model}` : ""}${configuration.context ? ` · ${count(configuration.context)} context` : ""}${configuration.output ? ` · ${count(configuration.output)} output` : ""}`));
+    const provenance = element("details", "inventory-provenance");
+    provenance.append(element("summary", "", "Saved configuration & provenance"));
+    if (revision.id) provenance.append(element("small", "", `Harness ${revision.id}`));
+    if (configuration.id) provenance.append(element("small", "", `Configuration ${configuration.id}`));
+    if (revision.content_sha256) provenance.append(element("small", "", `Harness content SHA-256 ${revision.content_sha256}`));
+    if (configuration.tool_policy_sha256) provenance.append(element("small", "", `Tool policy SHA-256 ${configuration.tool_policy_sha256}`));
+    if (configuration.association) provenance.append(element("p", "field-help", configuration.association));
+    starting.append(provenance);
+    section.append(starting);
+    const groups = { always_on: "Always-on guidance", skills: "Custom skills", subagents: "Custom subagents", scripts: "Helper scripts", plugins: "Profile plugins" };
+    const components = element("div", "inventory-components");
+    for (const [key, label] of Object.entries(groups)) {
+      const items = inventory.components?.[key] || [];
+      const group = element("details", "inventory-component-group");
+      group.append(element("summary", "", `${label} · ${count(items.length)}`));
+      if (!items.length) group.append(element("p", "field-help", `No ${label.toLowerCase()} in this selected harness. Built-in runtime tools are listed separately.`));
+      for (const item of items) {
+        const file = element("article", "inventory-component");
+        file.append(element("strong", "", item.label || item.name || item.path), element("small", "", item.path || ""));
+        if (item.description) file.append(element("p", "", item.description));
+        if (item.present === false) file.append(element("p", "field-help", "Declared, but its file is missing."));
+        else if (item.bytes !== undefined) file.append(element("small", "", bytes(item.bytes)));
+        group.append(file);
+      }
+      components.append(group);
+    }
+    section.append(components);
+    const tools = element("details", "inventory-tools");
+    tools.append(element("summary", "", "Runtime tools and conditions"));
+    for (const tool of [...(inventory.builtin_tools || []), ...(inventory.application_tools || [])]) {
+      const row = element("article", "inventory-tool");
+      row.append(element("strong", "", tool.label || tool.id), element("span", "evidence-badge", human(tool.status || "unknown")));
+      if (tool.description) row.append(element("p", "", tool.description));
+      if (tool.qualification) row.append(element("p", "field-help", tool.qualification));
+      tools.append(row);
+    }
+    if (inventory.runtime?.source) tools.append(element("p", "field-help", inventory.runtime.source));
+    if (inventory.runtime?.version) tools.append(element("p", "field-help", `${inventory.runtime.substrate || "Runtime"} ${inventory.runtime.version}${inventory.runtime.commit ? ` · ${inventory.runtime.commit}` : ""}`));
+    section.append(tools);
+    const permissions = inventory.permissions || {};
+    const limits = element("details", "inventory-boundaries");
+    limits.append(element("summary", "", "Inventory scope and permissions"));
+    if (permissions.summary) limits.append(element("p", "", permissions.summary));
+    else if (permissions.os_sandbox === false || permissions.shell_confined === false) limits.append(element("p", "inventory-permission-fact", "OpenCode permission rules are application policy. They are not an operating-system sandbox; shell commands are not confined to the working folder."));
+    if (permissions.qualification) limits.append(element("p", "field-help", permissions.qualification));
+    if (inventory.limits?.length) {
+      const list = element("ul");
+      list.append(...inventory.limits.map((limit) => element("li", "", limit)));
+      limits.append(list);
+    }
+    section.append(limits);
+    return section;
   }
   function renderProfileConfigurations(profile) {
     const section = profileSection("Configurations", "Immutable snapshots of the model, runtime, budgets, and roles. Save any Setup changes before capturing one.");
@@ -1029,6 +1100,150 @@
     details.append(form);
     wrap.append(details);
   }
+  function conversationFocused(id) {
+    return view === "conversations" && selectedConversationId === id && document.visibilityState !== "hidden" && typeof document.hasFocus === "function" && document.hasFocus();
+  }
+  function browserNotifications() { return typeof window.Notification === "function" ? window.Notification : null; }
+  function renderConversationAttention() {
+    const notifications = state?.notifications || { enabled: false, unread_count: 0 };
+    const unread = Math.max(0, Number(notifications.unread_count) || 0);
+    text("#nav-conversation-unread", count(unread));
+    $("#nav-conversation-unread").hidden = unread === 0;
+    $("#nav-conversation-unread").setAttribute("aria-label", `${counted(unread, "unread model message")}`);
+    const apiType = browserNotifications();
+    const permission = apiType?.permission || "unavailable";
+    const wrap = $("#conversation-notifications");
+    const copy = element("div");
+    copy.append(element("strong", "", notifications.enabled ? "Desktop notifications are enabled." : "Desktop notifications are off."));
+    copy.append(element("p", "field-help", !apiType ? "This browser does not offer desktop notifications. Unread messages still appear in the sidebar and conversation list." : permission === "denied" ? "This browser blocks notifications for this address. Change its site permissions to allow them; unread counts remain available." : "When enabled, new model-initiated posts can notify you while this conversation is not focused. Replies, your messages, delivery changes, and working records do not trigger alerts."));
+    const details = element("details", "conversation-notification-details");
+    details.id = "conversation-notification-details";
+    details.open = document.getElementById(details.id)?.open || false;
+    details.append(element("summary", "", "Notification details"), element("p", "field-help", "Browser permission and your operating system’s notification settings both apply. A notification attempt does not confirm that it was displayed or read."), element("p", "field-help", "An alert may show a brief excerpt of the visible model message outside Studio."));
+    copy.append(details);
+    if (notifications.enabled && permission === "default") copy.append(element("p", "field-help", "This browser address still needs permission. Studio may use a different local address after a restart; permission is specific to the browser and address."));
+    if (notificationError) copy.append(element("p", "error-text", notificationError));
+    const actions = element("div", "conversation-notification-actions");
+    if (notifications.enabled) {
+      const off = conversationButton("Turn notifications off", () => setConversationNotifications(false));
+      off.disabled = notificationBusy;
+      actions.append(off);
+      if (apiType && permission === "default") {
+        const allow = conversationButton("Allow in this browser", () => setConversationNotifications(true));
+        allow.disabled = notificationBusy;
+        actions.append(allow);
+      }
+    } else {
+      const on = conversationButton("Enable desktop notifications", () => setConversationNotifications(true));
+      on.disabled = notificationBusy || !apiType || permission === "denied";
+      actions.append(on);
+    }
+    if (!apiType || permission === "denied") actions.append(conversationButton("Open Studio in my browser", openStudioBrowser));
+    wrap.replaceChildren(copy, actions);
+    processConversationNotifications();
+  }
+  async function openStudioBrowser() {
+    try {
+      const result = await api("/api/open-browser", { method: "POST", body: {} });
+      toast(result.opened ? "Studio opened in your default browser. Notification permission is still your choice." : "The browser could not be opened. Reopen the Studio launch link in your browser.", !result.opened);
+    } catch (error) { toast(error.message, true); }
+  }
+  async function setConversationNotifications(enabled) {
+    if (notificationBusy) return;
+    notificationBusy = true;
+    notificationError = "";
+    try {
+      if (enabled) {
+        const apiType = browserNotifications();
+        if (!apiType) throw new Error("This browser does not offer desktop notifications. Unread counts remain available.");
+        const permission = apiType.permission === "granted" ? "granted" : await apiType.requestPermission();
+        if (permission !== "granted") throw new Error("Desktop notification permission was not granted. Unread messages remain available in Studio.");
+      }
+      const result = await api("/api/notifications/settings", { method: "POST", body: { enabled } });
+      if (state) state.notifications = { ...state.notifications, ...(result.notifications || result) };
+    } catch (error) { notificationError = error.message; }
+    finally { notificationBusy = false; renderConversationAttention(); }
+  }
+  function processConversationNotifications() {
+    if (!state?.notifications) return;
+    const firstPoll = !notificationPrimed;
+    notificationPrimed = true;
+    for (const conversation of state.conversations || []) {
+      for (const item of conversation.attention_messages || []) {
+        const key = `${conversation.id}/${item.id}`;
+        if (attentionSeenIds.has(key)) continue;
+        attentionSeenIds.add(key);
+        if (firstPoll || !state.notifications.enabled || item.role !== "assistant" || item.origin !== "model_initiated" || conversationFocused(conversation.id)) continue;
+        showConversationNotification(conversation, item);
+      }
+    }
+  }
+  async function showConversationNotification(conversation, item) {
+    const apiType = browserNotifications();
+    if (!apiType || apiType.permission !== "granted") return;
+    try {
+      const claim = await api("/api/notifications/claim", { method: "POST", body: { conversation_id: conversation.id, message_id: item.id } });
+      if (!claim.claimed || !state?.notifications?.enabled || apiType.permission !== "granted" || conversationFocused(conversation.id)) return;
+      const name = state.profiles?.find((profile) => profile.id === conversation.profile_id)?.name || conversation.profile_id;
+      const notification = new apiType(`${name} — ${conversation.title || "Conversation"}`, { body: item.text || "A new model message is available.", tag: `harness2-${conversation.id}-${item.id}` });
+      notification.onclick = () => {
+        try { window.focus(); } catch (_) { /* Embedded browsers may control foreground focus. */ }
+        selectConversation(conversation.id);
+        notification.close();
+      };
+    } catch (_) {
+      notificationError = "A desktop notification could not be shown. The unread message remains available in Studio.";
+    }
+  }
+  function visibleAssistantIds(conversation) {
+    if (!conversationFocused(conversation?.id)) return [];
+    const unread = new Set(conversation.unread_message_ids || []);
+    if (!unread.size) return [];
+    const pane = $("#conversation-messages");
+    if (typeof pane.getBoundingClientRect !== "function") return [];
+    const area = pane.getBoundingClientRect();
+    const height = window.innerHeight || document.documentElement?.clientHeight || 0;
+    const width = window.innerWidth || document.documentElement?.clientWidth || 0;
+    const confirmed = readConfirmedIds.get(conversation.id) || new Set();
+    return (conversation.messages || []).filter((item) => item.role === "assistant" && unread.has(item.id) && !confirmed.has(item.id)).filter((item) => {
+      const node = document.getElementById(`conversation-message-${item.id}`);
+      if (typeof node?.getBoundingClientRect !== "function") return false;
+      const box = node.getBoundingClientRect();
+      return box.width > 0 && box.height > 0 && box.bottom > Math.max(0, area.top) && box.top < Math.min(height, area.bottom) && box.right > Math.max(0, area.left) && box.left < Math.min(width, area.right);
+    }).map((item) => item.id);
+  }
+  async function markVisibleConversationRead() {
+    const conversation = conversationCache.get(selectedConversationId);
+    if (!conversation || readInFlight.has(conversation.id)) return;
+    const ids = visibleAssistantIds(conversation).slice(0, 128);
+    if (!ids.length) return;
+    readInFlight.add(conversation.id);
+    const version = (conversationVersions.get(conversation.id) || 0) + 1;
+    conversationVersions.set(conversation.id, version);
+    try {
+      const result = await api(`/api/conversations/${encodeURIComponent(conversation.id)}/read`, { method: "POST", body: { message_ids: ids } });
+      const confirmed = readConfirmedIds.get(conversation.id) || new Set();
+      ids.forEach((id) => confirmed.add(id));
+      readConfirmedIds.set(conversation.id, confirmed);
+      if ((conversationVersions.get(conversation.id) || 0) === version) {
+        conversationVersions.set(conversation.id, version + 1);
+        cacheConversation(result);
+      } else {
+        const current = conversationCache.get(conversation.id);
+        if (current && Array.isArray(current.unread_message_ids)) {
+          const read = new Set(ids);
+          const remaining = current.unread_message_ids.filter((id) => !read.has(id));
+          cacheConversation({ ...current, unread_message_ids: remaining, unread_count: remaining.length,
+            attention_messages: (current.attention_messages || []).filter((item) => !read.has(item.id)) });
+        }
+      }
+      conversationListSignature = "";
+      renderConversationAttention();
+      renderConversations();
+    } catch (_) { /* Preserve unread state after an unconfirmed read request. */ }
+    finally { readInFlight.delete(conversation.id); }
+  }
+
   function conversationOptionAllowed() {
     if (state.features?.conversation_runs === false) return false;
     return Boolean($("#experiment-profile").value && experimentProfile() && experimentSettings()?.provider === "local" && $("#benchmark").value === "jb" && $("#substrate").value === "oc" && Number($("#workers").value) === 1);
@@ -1062,7 +1277,14 @@
     const conversation = result.conversation || result;
     if (!conversation?.id) throw new Error("This conversation could not be read.");
     conversationCache.set(conversation.id, conversation);
-    if (state) state.conversations = [{ id: conversation.id, profile_id: conversation.profile_id, title: conversation.title, run_id: conversation.run_id, status: conversation.status, active_worker_id: conversation.active_worker_id, message_count: conversation.messages?.length || 0, pending_count: conversation.pending_count ?? (conversation.messages || []).filter((item) => ["queued", "delivered"].includes(item.status)).length, runtime: conversation.runtime }, ...(state.conversations || []).filter((item) => item.id !== conversation.id)];
+    if (state) {
+      const previous = state.conversations?.find((item) => item.id === conversation.id) || {};
+      const unread = conversation.unread_count ?? previous.unread_count ?? 0;
+      const remaining = Array.isArray(conversation.unread_message_ids) ? new Set(conversation.unread_message_ids) : null;
+      const attention = conversation.attention_messages || (previous.attention_messages || []).filter((item) => !remaining || remaining.has(item.id));
+      state.conversations = [{ ...previous, id: conversation.id, profile_id: conversation.profile_id, title: conversation.title, run_id: conversation.run_id, status: conversation.status, active_worker_id: conversation.active_worker_id, message_count: conversation.messages?.length || 0, pending_count: conversation.pending_count ?? (conversation.messages || []).filter((item) => ["queued", "delivered"].includes(item.status)).length, unread_count: unread, attention_messages: attention, runtime: conversation.runtime }, ...(state.conversations || []).filter((item) => item.id !== conversation.id)];
+      if (state.notifications) state.notifications.unread_count = Math.max(0, (Number(state.notifications.unread_count) || 0) - (Number(previous.unread_count) || 0) + Number(unread));
+    }
     return conversation;
   }
   function selectConversation(id) {
@@ -1081,6 +1303,7 @@
     try {
       const result = await api(`/api/conversations/${encodeURIComponent(id)}`);
       if ((conversationVersions.get(id) || 0) !== version) return;
+      conversationVersions.set(id, version + 1);
       const conversation = cacheConversation(result);
       if (selectedConversationId === id && view === "conversations") renderConversationDetail(conversation);
     } catch (error) {
@@ -1093,7 +1316,9 @@
     conversationBusy = true;
     updateConversationComposer(conversationCache.get(selectedConversationId));
     try {
-      const conversation = cacheConversation(await api(`/api/conversations/${encodeURIComponent(id)}/${operation}`, { method: "POST", body }));
+      const result = await api(`/api/conversations/${encodeURIComponent(id)}/${operation}`, { method: "POST", body });
+      conversationVersions.set(id, (conversationVersions.get(id) || 0) + 1);
+      const conversation = cacheConversation(result);
       conversationDetailSignature = "";
       renderConversations();
       return conversation;
@@ -1155,6 +1380,7 @@
         const button = conversationButton(conversation.title, () => selectConversation(conversation.id), `conversation-list-item${selectedConversationId === conversation.id ? " selected" : ""}`);
         const name = profiles.find((profile) => profile.id === conversation.profile_id)?.name || conversation.profile_id;
         button.replaceChildren(element("strong", "", conversation.title || "Conversation"), element("small", "", `${name} · ${counted(conversation.message_count || 0, "message")}`), element("small", "", conversation.pending_count ? `${count(conversation.pending_count)} queued · ${human(conversation.runtime?.status || conversation.status)}` : human(conversation.runtime?.status || conversation.status)));
+        if (conversation.unread_count) button.append(element("span", "conversation-unread-pill", `${count(conversation.unread_count)} unread`));
         if (selectedConversationId === conversation.id) button.setAttribute("aria-current", "true");
         return button;
       }));
@@ -1231,6 +1457,7 @@
     if (!(conversation.messages || []).length) messages.append(element("p", "conversation-first-message", worker ? "The session is ready. Say hello, or ask what it is working on." : "Your visible conversation will appear here."));
     messages.scrollTop = follow ? messages.scrollHeight : priorScroll;
     renderConversationRecovery(conversation);
+    markVisibleConversationRead();
   }
   function renderConversationRecovery(conversation) {
     const recovery = conversation.recovery || {};
@@ -1699,6 +1926,7 @@
     renderJobs();
     renderProfiles();
     renderCapabilities();
+    renderConversationAttention();
     renderConversations();
     renderPlan();
     updateBusy();
@@ -2203,6 +2431,9 @@
   $("#conversation-compose-form").addEventListener("submit", sendConversationMessage);
   $("#conversation-draft").addEventListener("input", () => { if (selectedConversationId) conversationDrafts.set(selectedConversationId, $("#conversation-draft").value); });
   $("#conversation-draft").addEventListener("keydown", (event) => { if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) sendConversationMessage(event); });
+  $("#conversation-messages").addEventListener("scroll", markVisibleConversationRead);
+  window.addEventListener("focus", markVisibleConversationRead);
+  document.addEventListener("visibilitychange", markVisibleConversationRead);
   $("#capability-search").addEventListener("input", renderCapabilityList);
   $("#experiment-profile").addEventListener("change", renderExperimentProfile);
   ["experiment-configuration", "experiment-revision"].forEach((id) => $("#" + id).addEventListener("change", renderExperimentProfile));

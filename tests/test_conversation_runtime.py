@@ -42,11 +42,15 @@ class ConversationRuntimeTests(unittest.TestCase):
                          "time": {"completed": 2}, "finish": "stop", **info},
                 "parts": [{"type": "text", "text": text}]}
 
-    def request(self, **body):
+    def native_user(self, identifier, text="Original formal working task."):
+        return {"info": {"id": identifier, "role": "user", "sessionID": "ses_fixture"},
+                "parts": [{"type": "text", "text": text}]}
+
+    def request(self, native_messages=None, **body):
         identifier = uuid.uuid4().hex
         path = self.bridge.outbox / "requests" / (identifier + ".json")
         runtime.write_json(path, {"request_id": identifier, "session_id": "ses_fixture", **body})
-        self.bridge._tool_requests()
+        self.bridge._tool_requests(native_messages)
         return runtime.read_json(self.bridge.outbox / "replies" / path.name)
 
     def test_delivery_is_serial_and_native_response_is_matched_once(self):
@@ -174,6 +178,136 @@ class ConversationRuntimeTests(unittest.TestCase):
         wrong = self.request(kind="message", text="Wrong origin", session_id="ses_other")
         self.assertFalse(wrong["ok"])
         self.assertEqual(len(self.store.get(self.identifier)["messages"]), 2)
+
+    def test_explicit_contact_is_classified_from_its_native_working_turn(self):
+        formal = self.native_user("msg_formal_task")
+        native = self.native("msg_model_contact", parent="msg_formal_task", finish="tool-calls")
+        reply = self.request(kind="message", text="I found an uncertain source.",
+                             native_message_id="msg_model_contact", native_messages=[formal, native])
+        self.assertTrue(reply["ok"])
+        self.assertEqual(reply["record"]["origin"], "model_initiated")
+        self.assertEqual(reply["record"]["reply_to"], [])
+        self.assertEqual(reply["record"]["worker_id"], self.bridge.worker_id)
+
+    def test_tool_reply_is_not_a_notification_or_a_premature_completed_answer(self):
+        human = self.enqueue()
+        self.bridge._deliver()
+        native = self.native("msg_tool_reply", parent="msg_user", finish="tool-calls", text="Inspecting that choice.")
+        reply = self.request(kind="message", text="I am checking that now.",
+                             native_message_id="msg_tool_reply", native_messages=[native])
+        self.assertTrue(reply["ok"])
+        self.assertEqual(reply["record"]["origin"], "reply")
+        self.assertEqual(reply["record"]["reply_to"], [])
+        self.bridge._answers([native])
+        stored = next(row for row in self.store.get(self.identifier)["messages"] if row["id"] == human["id"])
+        self.assertEqual(stored["status"], "delivered")
+        self.bridge._answers([native, self.native("msg_terminal_answer", text="Here is the verified reason.")])
+        messages = self.store.get(self.identifier)["messages"]
+        self.assertEqual(messages[0]["status"], "answered")
+        self.assertEqual(messages[-1]["reply_to"], [human["id"]])
+        self.assertEqual(messages[-1]["origin"], "reply")
+
+    def test_missing_native_identity_stays_legacy_without_notification_eligibility(self):
+        for rows in (None, [], [self.native("msg_other_context", parent="msg_formal_task")]):
+            with self.subTest(rows=rows):
+                reply = self.request(kind="message", text="Contact without a verified native turn.",
+                                     native_message_id="msg_not_observed", native_messages=rows)
+                self.assertTrue(reply["ok"])
+                self.assertEqual(reply["record"]["origin"], "legacy")
+
+    def test_unconfirmed_human_native_input_is_never_classified_as_model_initiated(self):
+        human = self.enqueue()
+        self.bridge.client.send.side_effect = OSError("Accepted, but native receipt could not be confirmed")
+        self.bridge._deliver()
+        self.assertEqual(self.store.get(self.identifier)["messages"][0]["status"], "undelivered")
+        wrapper = self.native_user("msg_unknown_human", f"[Human conversation; source_message_id={human['id']}]\nA later human thought.")
+        native = self.native("msg_uncertain_reply", parent="msg_unknown_human", finish="tool-calls")
+        reply = self.request(kind="message", text="I have considered that thought.",
+            native_message_id="msg_uncertain_reply", native_messages=[wrapper, native])
+        self.assertTrue(reply["ok"])
+        self.assertEqual(reply["record"]["origin"], "reply")
+        self.assertEqual(self.store.get(self.identifier)["messages"][0]["status"], "undelivered")
+
+    def test_known_formal_parent_survives_poll_window_and_session_continuation(self):
+        formal = self.native_user("msg_earlier_formal_task")
+        self.bridge._tool_requests([formal])
+        self.bridge._tool_requests([formal])
+        remembered = [event for event in self.store.get(self.identifier)["observations"] if event["kind"] == "native_input"]
+        self.assertEqual(len(remembered), 1)
+        continued = runtime.SessionBridge(self.root, self.identifier, self.root / "continued", {},
+            model="local/test", label="Native parent remembered after restart", resume_session_id="ses_fixture")
+        continued.client = Mock(session_id="ses_fixture")
+        self.store.bind_worker(self.identifier, continued.worker_id, label=continued.label, session_id="ses_fixture")
+        self.addCleanup(continued.close)
+        request_id = uuid.uuid4().hex
+        runtime.write_json(continued.outbox / "requests" / (request_id + ".json"), {
+            "request_id": request_id, "session_id": "ses_fixture", "kind": "message",
+            "text": "A later update under the same formal task.", "native_message_id": "msg_later_post",
+        })
+        native = self.native("msg_later_post", parent="msg_earlier_formal_task", finish="tool-calls")
+        continued._tool_requests([native])
+        reply = runtime.read_json(continued.outbox / "replies" / (request_id + ".json"))
+        self.assertTrue(reply["ok"])
+        self.assertEqual(reply["record"]["origin"], "model_initiated")
+        self.assertTrue(any(event["kind"] == "native_input" for event in self.store.get(self.identifier)["observations"]))
+
+    def test_unknown_native_parent_is_legacy_even_when_assistant_identity_matches(self):
+        self.store.record_event(self.identifier, "native_input", {
+            "session_id": "ses_unrelated", "message_id": "msg_parent_not_observed", "origin": "formal",
+        }, worker_id=self.bridge.worker_id)
+        native = self.native("msg_unknown_parent_post", parent="msg_parent_not_observed", finish="tool-calls")
+        reply = self.request(kind="message", text="An update with unknown ancestry.",
+            native_message_id="msg_unknown_parent_post", native_messages=[native])
+        self.assertTrue(reply["ok"])
+        self.assertEqual(reply["record"]["origin"], "legacy")
+
+    def test_lost_ack_replay_bypasses_growth_budget_without_reverting_later_checkpoint(self):
+        source = self.enqueue()
+        decision = self.request(kind="decision", text="Keep a sourced choice. " + "t" * 2000,
+                                why="A detailed recorded reason. " + "r" * 4000,
+                                source_message_ids=[source["id"]], status="adopted")
+        checkpoint = self.request(kind="checkpoint", objective="Old bounded recovery",
+                                  completed=["Read the source."], planned=["p" * 3500],
+                                  decision_ids=[decision["record"]["id"]])
+        self.assertTrue(decision["ok"] and checkpoint["ok"])
+        latest = self.store.checkpoint(self.identifier, worker_id=self.bridge.worker_id,
+                                       objective="The later current checkpoint", planned=["Verify the output."])
+        self.bridge._recovery()
+        for number in range(40):
+            if len(runtime.config.long_path(self.bridge.recovery_file).read_bytes()) >= 30_000:
+                break
+            self.store.record_decision(self.identifier, worker_id=self.bridge.worker_id,
+                text=f"Other retained choice {number}", why="f" * 600, source_message_ids=[source["id"]])
+            self.bridge._recovery()
+        self.assertGreaterEqual(len(runtime.config.long_path(self.bridge.recovery_file).read_bytes()), 30_000)
+        for result in (decision, checkpoint):
+            request_id = result["record"]["request_id"]
+            runtime.config.long_path(self.bridge.outbox / "replies" / (request_id + ".json")).unlink()
+        continued = runtime.SessionBridge(self.root, self.identifier, self.root / "continued", {},
+            model="local/test", label="Resumed after lost acknowledgements",
+            resume_session_id="ses_fixture", session_runtime=self.bridge.runtime)
+        continued.client = Mock(session_id="ses_fixture")
+        self.store.bind_worker(self.identifier, continued.worker_id, label=continued.label, session_id="ses_fixture")
+        continued._recovery()
+        self.addCleanup(continued.close)
+        before = self.store.get(self.identifier)
+        continued._tool_requests([])
+        for result in (decision, checkpoint):
+            path = continued.outbox / "replies" / (result["record"]["request_id"] + ".json")
+            self.assertEqual(runtime.read_json(path), result)
+        self.assertEqual(self.store.get(self.identifier), before)
+        self.assertEqual(runtime.read_json(continued.recovery_file)["checkpoint"], latest)
+        # The replay budget exemption cannot permit a changed committed packet.
+        request_id = decision["record"]["request_id"]
+        path = continued.outbox / "requests" / (request_id + ".json")
+        packet = runtime.read_json(path)
+        packet["text"] = "An altered committed choice."
+        runtime.write_json(path, packet)
+        reply_path = continued.outbox / "replies" / path.name
+        runtime.config.long_path(reply_path).unlink()
+        continued._tool_requests([])
+        self.assertFalse(runtime.read_json(reply_path)["ok"])
+        self.assertEqual(self.store.get(self.identifier), before)
 
     def test_recovery_does_not_silently_drop_the_earliest_decisions(self):
         source = self.enqueue()
