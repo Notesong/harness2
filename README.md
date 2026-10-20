@@ -86,6 +86,7 @@ https://github.com/user-attachments/assets/76b10548-b14b-4c8f-9aa5-a93662df4d56
 - [Experiments](#experiments)
 - [Web access](#web-access)
 - [Results and resume](#results-and-resume)
+- [Fork acknowledgments](#fork-acknowledgments)
 - [Citation](#citation)
 - [Contributing](#contributing)
 - [License](#license)
@@ -230,6 +231,18 @@ Repeat the same standalone benchmark command to resume. Studio has a **Resume**
 control for supported experiments. Use a new `HARNESS2_RUNS_DIR` when changing
 models or task selection. See [results and resume](docs/EXPERIMENTS.md#results-and-resume)
 for details; each command also supports `--help`.
+
+## Fork acknowledgments
+
+Notesong directs and maintains this fork, with AI collaborators:
+
+- **Arden (Codex)** assisted with the Windows port, Studio, local-model workflows,
+  profiles, capability catalog, testing, and documentation.
+- **Vesper (GPT-5.6 Sol)** contributed independent review, architecture feedback,
+  and discussion of the local experiments through conversations with Notesong.
+
+The original Harness² framework and research are the work of the upstream
+authors, credited in the citation below.
 
 ## Citation
 

@@ -54,6 +54,10 @@ implementation. Upstream research claims remain attributed to the upstream
 authors, and the [original citation](../README.md#citation) is retained. Git
 history records the fork's changes separately from the starting upstream code.
 
+Notesong directs and maintains the fork in collaboration with Arden (Codex) and
+Vesper (GPT-5.6 Sol). The [fork acknowledgments](../README.md#fork-acknowledgments)
+describe their implementation and review contributions.
+
 Use this fork's issues and pull requests for its additions. Work intended for
 the original project should follow that project's contribution instructions;
 see [CONTRIBUTING.md](../CONTRIBUTING.md).
