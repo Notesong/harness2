@@ -51,8 +51,11 @@ to `global`. Your account must have access to each configured model.
 | `HARNESS2_JUDGE_MODEL` | Bare judge model ID; the adapter supplies the Vertex prefix |
 | `HARNESS2_RUNS_DIR` | Output root; defaults to `runs/` |
 
-The provided configuration uses Vertex Gemini executors and judges, and supports
-either Vertex Claude or Gemini as the improver. LAB also supports the upstream
+The template leaves model IDs blank; it does not select a cloud model
+automatically. For the Vertex route described here, configure Gemini executors
+and judges, with either Vertex Claude or Gemini as the improver. The Google
+authentication steps apply to that route, not the local llama.cpp workflow.
+LAB also supports the upstream
 judge's direct providers when their credentials are configured. For WorkBuddy,
 setup generates the Gemini solver and judge routes from these settings; rerun
 setup after changing either model.

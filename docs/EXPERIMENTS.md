@@ -17,6 +17,10 @@ After adoption, reflection stores the adopted harness and evidence-supported
 lessons in a per-domain library. Tasks within a domain run in order and read
 only earlier entries; different domains can run concurrently. Libraries are
 separated by benchmark, executor, mode, budget, and seed.
+Here, adoption means selection inside the experiment. A profile experiment can
+archive that result as a candidate without changing the profile's active
+harness. Its starting configuration, revision, and any opted-in catalog packet
+stay pinned on resume; see [profiles](PROFILES.md).
 
 | Option | Behavior |
 |---|---|
@@ -43,16 +47,20 @@ easy to distinguish.
 
 ## Task selection and cost
 
-Model-backed runs incur API costs for executor rollouts and improvement stages.
-The full LAB task stream contains 1,143 tasks. Start with a small selection and
-review model pricing before launching a full run.
+Cloud model runs can incur API charges for executor rollouts and improvement
+stages; local models consume compute and time. The full LAB task stream contains
+1,143 tasks. Start with a small selection and review the expected work and any
+provider charges before launching a full run.
 
 - `--only-domains` restricts the run to the named domains.
 - `--max-tasks` caps tasks **per domain**, not across the whole run.
 - `--dry-run` previews selected tasks and available domains without model calls.
 
-Each benchmark also has a script that runs checks, refinement, judging, and
-reporting in sequence. Set `SUBSTRATE`, `K`, `MODE`, and, for WorkBuddy,
+Each benchmark also has a Bash script that runs checks, refinement, judging, and
+reporting in sequence. These examples are for a Bash environment. Native Windows
+users can use [Studio](UI.md) or, for a complete local JobBench/OpenCode workflow,
+[`harness2-local-run`](LOCAL_MODELS.md#start-and-unload-automatically).
+Set `SUBSTRATE`, `K`, `MODE`, and, for WorkBuddy,
 `SUBSET`; additional arguments are passed to the refinement command:
 
 ```bash
@@ -89,6 +97,17 @@ release assets, and the script refuses to overwrite an existing file.
 `harness2-judge --bases` scores a run namespace's reference executions, writing
 `base_judged.json` beside `judged.json` for the base-harness comparison.
 `harness2-report` covers the refined harness only.
+Baseline grading is a separate opt-in step. The normal Studio/local workflow
+grades selected results; a selected score alone does not establish improvement.
+For a matching JobBench run, request baseline grading explicitly:
+
+```bash
+harness2-judge --bench jb --substrate oc --k 1 --mode parallel --bases
+```
+
+Use the same output root and namespace settings as the refinement run. Comparing
+models or configurations requires a controlled task selection and evaluation,
+not just a successful execution.
 
 ## Web access
 
@@ -110,11 +129,18 @@ tool setting. Report the restrictions used alongside results.
 
 ## Results and resume
 
-The default output roots are `runs/lab/`, `runs/jb/`, and
+The standalone benchmark CLI's default output roots are `runs/lab/`, `runs/jb/`, and
 `runs/wb/<subset>/`. They contain task summaries, execution artifacts, adopted
 harnesses, reflection notes, and graded results.
+The full local wrapper creates a distinct directory under `runs/local/` unless
+`--output` is supplied. Studio operations normally live under `runs/ui/`.
+`HARNESS2_RUNS_DIR` changes the runs root. [Studio](UI.md) also discovers supported
+existing CLI runs and exposes their readable reports and timelines when available.
 
-Repeat the same command to resume. Failed evaluations remain unscored rather
+Repeat the same standalone benchmark command to resume. Studio provides a
+**Resume** control for supported experiments. The full local wrapper refuses
+a nonempty `--output` directory; repeating it creates a separate experiment
+when no output is specified. Failed evaluations remain unscored rather
 than being counted as zero. Use a new `HARNESS2_RUNS_DIR` when changing models or
 task selection.
 

@@ -38,7 +38,10 @@ packaged under `harness2/third_party/` in wheels. Setup copies the LAB and
 WorkBuddy overlays into the upstream checkouts. JobBench uses native Python
 launchers; its original Codex shell launcher remains a reference asset.
 
-The upstream dependency locks are used for Python installations. OpenCode uses
+The upstream dependency locks are used for Python installations. Setup also adds
+`python-docx` for JobBench and `google-auth[requests]` for LAB without fixed
+versions; those supplementary resolutions are not pinned by the upstream locks.
+OpenCode uses
 Bun 1.3.11 and the patched lock. Codex uses the version in `config.CODEX_VERSION`.
 JobBench's Hugging Face revision is resolved once for a download and recorded in
 `dataset/main/.harness2-download.json`. WorkBuddy's dataset fetcher, as patched

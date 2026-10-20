@@ -1,5 +1,8 @@
 # Windows
 
+This guide describes [Notesong's fork](FORK.md). The upstream research framework
+and its published results are credited separately in the [README](../README.md).
+
 Harness² can run from PowerShell with Python 3.12 or 3.13. The local demo needs
 only Python. Benchmark setup targets **Windows x64 with Python 3.12**; the pinned
 JobBench and LAB dependencies do not all provide native Windows ARM64 wheels.
@@ -131,6 +134,8 @@ harness2-demo --output runs/demo --k 2
 The tests cover local recursion and resume, concurrent file locking, executable
 and environment paths, runner commands, and timeout cleanup without model calls.
 The CI workflow is configured for Windows and Ubuntu with Python 3.12 and 3.13.
+The reviewed checkpoint passed all four jobs; see the
+[current validation summary](VALIDATION.md#current-fork-checkpoint).
 A complete model-backed benchmark also requires a working model connection,
 datasets, and the relevant external tools; the local suite does not validate
 those services. See [the validation record](VALIDATION.md) for actual local-model

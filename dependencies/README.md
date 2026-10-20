@@ -6,7 +6,7 @@ control. Pins are defined in `harness2/config.py`; setup commands are in the
 
 | Upstream | License | Release integration |
 |---|---|---|
-| [Job-Bench/job-bench-eval](https://github.com/Job-Bench/job-bench-eval) | Apache 2.0 | Derived Codex shell runner, baseline harnesses, and judge patch |
+| [Job-Bench/job-bench-eval](https://github.com/Job-Bench/job-bench-eval) | Apache 2.0 | Native Python launchers, baseline harnesses, judge patches, and original Codex shell reference |
 | [harveyai/harvey-labs](https://github.com/harveyai/harvey-labs) | MIT | Derived LAB runners and Vertex judge patch |
 | [Tencent/workbuddy-bench](https://github.com/Tencent/workbuddy-bench) | Custom Tencent license | Derived Harbor agents, harness configs, and runtime patch |
 | [anomalyco/opencode](https://github.com/anomalyco/opencode) | MIT | Runtime dependency and compatibility patch |

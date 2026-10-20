@@ -47,8 +47,10 @@ normalization, and bundled runner bytes are checked against the asset manifest.
 
 [VALIDATION.md](VALIDATION.md) distinguishes unit tests, native integrations,
 pinned upstream checks, model-backed execution, and Docker-backed execution.
-An unperformed tier is not implied by a passing lower tier. The port is kept on
-the `windows-support` branch for review; it is not merged into `main`.
+An unperformed tier is not implied by a passing lower tier. This initial review
+was carried out on `windows-support` before a merge into the fork's `main`.
+See [the fork overview](FORK.md) and [current validation](VALIDATION.md#current-fork-checkpoint)
+for the later Studio, profile, catalog, and lifecycle checkpoints.
 
 ## Follow-up review
 

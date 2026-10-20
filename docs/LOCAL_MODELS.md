@@ -52,7 +52,9 @@ Add `--dry-run` to preview task selection without starting a model or creating a
 experiment directory.
 
 The wrapper currently supports JobBench with OpenCode and requires the local
-profile for solving, improving, and judging. Explicit conflicting model or
+connection for solving, improving, and judging. A saved [model profile](PROFILES.md)
+is optional; select one with `--profile NAME` to pin its configuration and
+harness. Explicit conflicting model or
 judge-endpoint overrides are rejected. Standalone `harness2`, `harness2-judge`,
 and `harness2-report` keep their existing lifecycle: they do not start or stop
 your model server. Use the full workflow when you want automatic cleanup across
@@ -142,6 +144,7 @@ adjustment; see [the preserved experiment](experiments/LOCAL_COMPACTION.md).
 Put these settings in the checkout's ignored `.env`, or export them in the shell:
 
 ```dotenv
+HARNESS2_LOCAL_RUNTIME=external
 HARNESS2_LOCAL_BASE_URL=http://127.0.0.1:8087/v1
 HARNESS2_LOCAL_MODEL=local-model-64k
 HARNESS2_LOCAL_CONTEXT=65536
@@ -165,9 +168,12 @@ HARNESS2_JUDGE_BASE_URL=http://127.0.0.1:8087/v1
 HARNESS2_JUDGE_API_KEY=local
 ```
 
-Use a different model alias when changing GGUF weights. Resume and judging
+Use a different model alias when changing GGUF weights. Unprofiled local runs
 check the recorded alias, endpoint, and configured limits; they cannot identify
-different weights served under an unchanged alias.
+different weights served under an unchanged alias. Profile-bound runs also pin
+and verify available local model/runtime file hashes and declared tool policy.
+Those hashes do not establish which weights an external server actually serves.
+See [profile identity limits](PROFILES.md) for the distinction.
 
 Explicit model and judge settings take precedence over those defaults. The
 dummy `local` key satisfies clients that require a nonempty API key; it is not

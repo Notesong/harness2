@@ -84,7 +84,9 @@ retired revision can be selected again later.
 **Borrow from another profile** is an explicit import. It copies an independent
 candidate with a reference to its source and starts as a hypothesis. It neither
 changes the source profile nor activates the borrowed harness. No successful
-component is distributed to every profile automatically.
+component is distributed to every profile automatically. This operation copies
+the entire selected source harness. Use a capability fork to merge published
+component files into a recipient profile's own starting harness instead.
 
 The separate [capability catalog](CAPABILITIES.md) can publish selected component
 files with provenance and support explicit file-level forks. Model exposure is
@@ -123,7 +125,8 @@ checking, not protection against an owner deliberately rewriting the entire
 archive.
 
 Every profile experiment gets `profile-start.json`, containing its exact
-configuration, harness, and selected experience. The harness becomes that run's
+configuration, harness, selected experience, and any separately opted-in catalog
+packet. The harness becomes that run's
 baseline. Domain-matching experience can seed the proposer's disposable working
 library. The working library can still prune or reorganize during optimization;
 it does not become the profile's canonical past.
@@ -144,9 +147,11 @@ Use `--revision FULL_REVISION_ID` to test a candidate without adopting it, or
 `--configuration FULL_CONFIGURATION_ID` to select another saved recipe. Add
 `--dry-run` to preview the task stream without loading a model or creating a run.
 
-Permanent notes, grades, profile history, and unrelated profiles are not copied
-into solver or proposer context. The model receives the explicitly selected
-harness and applicable experience. Existing answer-key boundaries and recognized
+Permanent notes, grades, and full profile histories are not copied into solver
+or proposer context. The model receives the explicitly selected harness and
+applicable experience. An opted-in catalog adds a frozen reference packet to the
+proposer's disposable context; it does not add foreign instructions to the
+solver's active harness. Existing answer-key boundaries and recognized
 grader-marker checks apply. Those checks are tripwires; the primary boundary is
 choosing answer-free sources rather than reading evaluation reports into a harness.
 

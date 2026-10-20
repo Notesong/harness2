@@ -12,6 +12,18 @@ filesystem boundaries, model lifetime, and benchmark rules remain shared
 infrastructure. A capability is a recorded technique or component, not an
 exception to those boundaries.
 
+## Find it in Studio
+
+Open **Capabilities** to inspect the catalog's status and any saved entries.
+Leave it off until you want to exchange material. **Enable catalog** permits
+publication and forks; **Choose which profiles may see the catalog** controls
+reference access separately for each profile.
+
+With the catalog enabled, expand **Publish from a profile**, choose the source
+profile, configuration, revision, and files, then describe the capability and its
+limits. Open an entry to read its files as plain text, follow its family links,
+or create a candidate in another profile. Reading a file never executes it.
+
 ## Publishing preserves its source
 
 Publish explicitly selected files from a saved profile revision. A catalog entry
@@ -26,6 +38,10 @@ and a behavioral instruction can have different portability. The publisher's
 description and evidence labels are claims to inspect, rather than automatic
 certification of correctness or transfer.
 
+Publishing with an observed, replicated, or transferred label requires a supporting
+reference. The catalog records that declaration without verifying the referenced
+run or establishing that the capability caused its outcome.
+
 The selected origin configuration is a declared association. Selecting it does
 not establish that the configuration caused or authored the component. Likewise,
 independent invention is a declared origin, not a finding the catalog certifies.
@@ -34,7 +50,8 @@ Supporting runs remain references. Their reports, grades, raw sessions, and
 private configuration are not read into model context. Existing recognized
 grader-marker checks also apply to the public packet and component files.
 These checks are tripwires; publishing answer-free sources is the primary
-boundary.
+boundary. Only the packet's allowed public reference fields are exposed to a
+model; freeform administrative reference text is not included.
 
 ## Browsing has three explicit gates
 
@@ -77,14 +94,15 @@ This distinction keeps clean starting conditions possible: a new profile can
 work without catalog exposure, then begin a separately recorded experiment
 with references available.
 
-The initial exposure packet is bounded to 32 entries and 1 MiB. A larger catalog
-requires an explicit selection policy before it can be exposed; a run fails
-preflight rather than silently receiving a truncated catalog.
+The exposure packet is bounded to 32 entries and 1 MiB. The current implementation
+offers the whole catalog to an opted-in profile; it has no per-entry selection
+control. If the packet exceeds either limit, a new opted-in run fails preflight
+rather than silently receiving a truncated catalog.
 
 ## Forking creates a candidate
 
-An explicit fork copies selected component files into a new revision of the
-recipient profile. It records the exact source capability version and local
+An explicit fork copies the published entry's component files into a new revision
+of the recipient profile. It records the exact source capability version and local
 parent revision. It starts as **foreign / unvalidated locally**, regardless of
 what happened in the originating profile.
 
@@ -94,12 +112,13 @@ content is retained unless replacement is explicitly chosen for a collision.
 A skill fork may add a discovery hint to the candidate's guardrails so the skill
 can be found. Those integration changes are recorded with the fork; the source
 profile's guardrails are not copied implicitly. Unrelated local files are retained.
-The resulting candidate can be edited,
-tested, simplified, retired, or explicitly selected for future work through the
-normal profile workflow.
+In the fork form, **Adapt the borrowed files before saving** permits optional text
+changes to the incoming files. The source entry stays intact. The resulting
+candidate can be tested, simplified, retired, or explicitly selected for future
+work through the normal profile workflow.
 
-A later publication from that candidate can preserve the capability reference
-in its ancestry. Independent invention and transmission are different origins:
+A later publication from that candidate preserves its recorded capability
+ancestry. Independent invention and transmission are different origins:
 an independently developed component does not receive a borrowed-from link just
 because similar material exists elsewhere in the catalog.
 

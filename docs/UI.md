@@ -45,8 +45,9 @@ stays available for setup checks, refinement, judging, and the final report;
 Studio then stops it and releases its model resources. A failed or stopped run
 also closes its owned model server. No model weights are downloaded.
 
-Managed startup refuses an occupied endpoint. Use **External server** when you
-want to use a server already running; Studio never stops an external server.
+Managed startup refuses an occupied endpoint. Choose **Connect to an existing
+server** when you want to use a server already running; Studio never stops an
+external server.
 In external mode, **Test connection** reads the model list without generating a
 completion. In managed mode, testing and saving settings do not load the model;
 startup and readiness checks happen when a real experiment starts. Choose the
@@ -54,7 +55,7 @@ exact model ID for an external server and save.
 
 Keys are write-only in the interface and are stored in the workspace's ignored
 `.env`. A managed server's temporary access key stays within its running job.
-The local profile configures OpenCode and the judge together; see
+The local connection configures OpenCode and the judge together; see
 [LOCAL_MODELS.md](LOCAL_MODELS.md) for the full-workflow CLI, context limits,
 and server setup.
 
@@ -88,7 +89,7 @@ retries can add work.
 experiment** shows the connection and compute use before it starts. The normal
 pipeline checks setup, runs refinement, judges the adopted output, and builds
 the score report, then adds a readable wrap-up before unloading an owned model.
-Concurrent domains controls domain workers; the current form
+**Parallel domains** controls domain workers; the current form
 selects one domain.
 
 ## Keep a model's profile
@@ -103,7 +104,8 @@ and harness to use for future runs.
 New experiments can select a profile and a particular configuration and harness.
 Their recorded starting snapshot stays fixed even when the profile later changes.
 The profile's notes, evaluation results, and full history are kept outside model
-context; only the selected harness and applicable experience seed the run.
+context. The selected harness and applicable experience seed the run; optional
+catalog references require the separate opt-in described below.
 Existing runs can still be opened from **Runs** or the profile's associated runs.
 
 Profiles also support observations and unresolved hypotheses, optional conversation
@@ -112,6 +114,26 @@ another profile. Borrowing creates an independent hypothesis and does not activa
 it. Active and retired describe use; observed, suspected, replicated, and
 transferred describe supporting evidence. See [PROFILES.md](PROFILES.md) for
 the storage boundaries, identity limits, and Owen's historical import.
+
+## Keep capabilities available for later
+
+**Capabilities** opens the workspace's shared component catalog. It starts off,
+with no example entries and no profile access enabled. You can inspect saved
+entries while it is off; publication and forks remain disabled.
+
+When you choose **Enable catalog**, each profile still needs its own **Allow
+reference access** choice before new experiments can receive catalog material.
+Use **Publish from a profile** to snapshot selected files from a saved revision.
+An entry shows its source, declared evidence and costs, limitations, files, and
+related variants. Forking into another profile creates an unvalidated candidate;
+it does not activate the candidate or run its files.
+
+New experiment plans show current reference availability. A profile run's
+recorded starting point states whether catalog references were exposed, with
+links to inspect the recorded entries. Availability does not establish use or
+benefit. Disabling the catalog affects new experiments; existing runs keep their
+pinned starting snapshots. See [CAPABILITIES.md](CAPABILITIES.md) for the exposure
+gates, ancestry, and current limits.
 
 ## Follow, stop, and resume
 
@@ -127,6 +149,10 @@ Results appear as each task finishes. Scores only appear after judging and
 are not inferred from a completed execution. Output files can be downloaded,
 text files previewed, and changes compared with the baseline. **Open folder**
 opens the actual output directory in the system file manager.
+
+Open a run's **Overview** for its readable report, **Timeline** for short recorded
+progress entries, **Outputs** for deliverables, or **Activity** for command output.
+The run's **Home** and **All runs** links remain available after completion.
 
 The run's readable report explains what was recorded, which files were produced,
 and how the selected result was graded. It separates partial probes and proposal
@@ -154,6 +180,8 @@ the runs root. `.harness2-ui/` stores the job history, redacted activity logs,
 and the current server session. These paths and `.env` are ignored by Git.
 Recognized existing CLI runs are discovered as read-only history. Profiles and
 their append-only histories live in the separate `.harness2/profiles/` archive.
+The optional catalog has its own `.harness2/capabilities/` archive. Back up both
+archives and the run folders when preserving profiles and their supporting work.
 
 The server binds only to `127.0.0.1`, checks Host and Origin, and requires a
 random session token for every API request and artifact download. The browser

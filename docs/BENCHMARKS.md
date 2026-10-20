@@ -8,6 +8,11 @@ recursion mode with `--mode parallel` or `--mode sequential` and the task-level
 recursion budget with `--k`. Keep both identical across the run, judge, and
 report commands.
 
+These guides describe the available adapters, not equal validation of every
+workflow in this fork. One local JobBench/OpenCode experiment was completed;
+full LAB model execution and WorkBuddy/Docker execution have not been
+demonstrated. See [the validation record](VALIDATION.md#current-fork-checkpoint).
+
 ## LAB
 
 Upstream: [harveyai/harvey-labs](https://github.com/harveyai/harvey-labs).
@@ -44,6 +49,10 @@ Upstream: [Job-Bench/job-bench-eval](https://github.com/Job-Bench/job-bench-eval
 Data: [JobBench/job-bench](https://huggingface.co/datasets/JobBench/job-bench).
 Professional tasks, with the library grouped by the dataset's occupation
 directories.
+For llama.cpp with owned-server startup and unloading, use the
+[complete local workflow](LOCAL_MODELS.md#start-and-unload-automatically) through
+Studio or `harness2-local-run`. The standalone commands below leave server
+lifetime under your control.
 
 ```bash
 harness2-setup jb

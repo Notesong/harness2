@@ -7,8 +7,31 @@
   <a href="https://arxiv.org/pdf/2610.14224"><img src="https://img.shields.io/badge/Paper-arXiv-EA4335?logo=arxiv&logoColor=white" alt="Paper"></a>
   <a href="https://harness2.github.io"><img src="https://img.shields.io/badge/Website-harness2.github.io-4285F4?logo=googlechrome&logoColor=white" alt="Website"></a>
   <a href="docs/BENCHMARKS.md"><img src="https://img.shields.io/badge/Docs-Benchmark%20guides-FBBC04" alt="Benchmark guides"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-34A853" alt="License"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/Core%20license-Apache%202.0-34A853" alt="Core license: Apache 2.0"></a>
 </p>
+
+## About this fork
+
+This is [Notesong's independently maintained fork](https://github.com/Notesong/harness2)
+of [Google Research's Harness²](https://github.com/google-research/harness2).
+It adds Windows support, a local browser interface, a llama.cpp workflow,
+independent model profiles, and an optional capability catalog. The original
+research, authorship, citation, and license notices are retained.
+
+Start with [Harness² Studio](docs/UI.md) for the interface or the
+[Windows guide](docs/WINDOWS.md) for PowerShell setup. The demo needs no model.
+Local JobBench/OpenCode experiments can load an existing GGUF model, write a
+readable report and timeline, and unload their owned server when finished.
+Profiles keep configurations and harness ancestry separate; the capability
+catalog is **disabled by default**, with a separate opt-in for each profile.
+
+The latest code checkpoint passed CI on Windows and Ubuntu with Python 3.12 and
+3.13. One complete local JobBench experiment has also been exercised. That does
+not establish general model quality, full LAB or WorkBuddy/Docker execution,
+or successful transfer between profiles. See [the fork overview](docs/FORK.md)
+and [validation record](docs/VALIDATION.md) for the evidence and limits.
+
+The overview and illustrations below describe the upstream research framework.
 
 <p align="center">
   <a href="docs/BENCHMARKS.md#jobbench">
@@ -38,11 +61,13 @@ connects two levels of recursion while keeping model weights fixed:
   </a>
 </p>
 
-Across three professional benchmarks and four model–harness configurations, a
-single Harness² step improves GLM-5 and Gemini 3.5 Flash over their base
-harnesses, with gains of up to 11.5 points on WorkBuddy-Bench, 4.5 points on
+In the upstream paper, across three professional benchmarks and four
+model–harness configurations, a single Harness² step improves GLM-5 and Gemini
+3.5 Flash over their base harnesses, with gains of up to 11.5 points on
+WorkBuddy-Bench, 4.5 points on
 JobBench, and 11.8 percentage points on LAB's partial pass rate. Increasing the
 task-level recursion budget brings further gains.
+These are the upstream authors' reported results, not measurements from this fork.
 
 The release supports **parallel and sequential recursion**, **OpenCode and
 Codex executors**, and **JobBench, LAB, and WorkBuddy-Bench**.
@@ -53,6 +78,7 @@ https://github.com/user-attachments/assets/76b10548-b14b-4c8f-9aa5-a93662df4d56
 
 ## Contents
 
+- [About this fork](#about-this-fork)
 - [Video overview](#video-overview)
 - [Harness components](#harness-components)
 - [Install](#install)
@@ -82,7 +108,7 @@ inside the tool loop.
 
 For a local interface on Windows, double-click **`Launch Harness2.cmd`** after
 installing Python 3.12. It opens **Harness² Studio** in your browser, with a free
-demo, model setup, experiment controls, live logs, and result files. See the
+demo, model setup, experiment controls, readable reports, run history, and result files. See the
 [Studio guide](docs/UI.md) and [local model guide](docs/LOCAL_MODELS.md).
 
 Studio's **Profiles** keep each model's configurations, harness ancestry,
@@ -131,7 +157,9 @@ alternatives, and the [Codex executor](docs/SETUP.md#codex-executor).
 ## Run a benchmark
 
 The following example installs LAB and runs one task, then evaluates and reports
-its result. Model-backed runs incur API costs; start with a small task selection.
+its result. Cloud models can incur API charges; local models consume compute
+and time. Start with a small task selection. For the complete local JobBench
+workflow with automatic model cleanup, use [the local-model guide](docs/LOCAL_MODELS.md).
 
 ```bash
 harness2-setup lab
@@ -198,7 +226,8 @@ Results are saved under `runs/`, organized by benchmark and subset where
 applicable. They include task summaries, deliverables, adopted harnesses,
 reflection notes, and evaluation results.
 
-Repeat the same command to resume. Use a new `HARNESS2_RUNS_DIR` when changing
+Repeat the same standalone benchmark command to resume. Studio has a **Resume**
+control for supported experiments. Use a new `HARNESS2_RUNS_DIR` when changing
 models or task selection. See [results and resume](docs/EXPERIMENTS.md#results-and-resume)
 for details; each command also supports `--help`.
 
@@ -216,7 +245,8 @@ for details; each command also supports `--help`.
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md).
+For changes to this fork, see [CONTRIBUTING.md](CONTRIBUTING.md). Contributions
+intended for the original project follow its upstream contribution process.
 
 ## License
 
@@ -224,8 +254,12 @@ Harness² is licensed under [Apache 2.0](LICENSE). Third-party code under
 [`third_party/`](third_party/README.md), benchmarks, and datasets retain their
 upstream licenses; see
 [third-party notices](dependencies/README.md).
+The bundled distribution records its combined license expression as
+`Apache-2.0 AND MIT AND LicenseRef-WorkBuddy-Bench`; the individual license texts
+and dataset terms still apply to their respective material.
 
 ## Disclaimer
 
-This is not an officially supported Google product. This project is not eligible
+This fork is maintained independently of Google. The upstream project is not an
+officially supported Google product. It is not eligible
 for the [Google Open Source Software Vulnerability Rewards Program](https://bughunters.google.com/open-source-security).

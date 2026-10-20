@@ -7,6 +7,25 @@ requests. Later UI and local-provider checks are recorded separately below.
 The original CI definition also targeted Ubuntu and Python 3.13. Actual
 hosted failures and the subsequent passing matrix are recorded below.
 
+## Current fork checkpoint
+
+Commit [`3455d45`](https://github.com/Notesong/harness2/commit/3455d45194ba8768b3b9120f04fc0b72757d7d1f)
+passed [all four CI jobs](https://github.com/Notesong/harness2/actions/runs/39298522902)
+on Windows and Ubuntu with Python 3.12 and 3.13. Each job passed its platform's
+279-test Python suite (with explicit platform-dependent skips), all 27 Node UI
+tests, the provenance checks, Ruff, and the deterministic demo. The local native
+Windows run passed 279 tests in 83.495 seconds with two explicit skips. This
+checkpoint includes the regression and fix for an asynchronous Windows shutdown
+race. A fresh installed-wheel proof and the dormant catalog check are detailed
+[below](#dormant-capability-catalog-2026-10-19).
+
+One real local JobBench task and a later managed-model lifecycle check provide
+the model-backed evidence described later in this document. They do not
+establish a graded baseline improvement, a new full profile-backed experiment,
+successful capability transfer, full LAB execution, or WorkBuddy/Docker execution.
+The following sections preserve earlier checkpoints as historical evidence;
+their smaller test counts are not the current suite size.
+
 ## What the local checks establish
 
 | Tier | Evidence | Boundary |
