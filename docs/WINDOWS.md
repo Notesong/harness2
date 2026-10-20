@@ -19,7 +19,7 @@ and [local models](LOCAL_MODELS.md) for llama.cpp setup.
 Install Git, Python 3.12, and uv, then open PowerShell:
 
 ```powershell
-git clone --branch windows-support https://github.com/Notesong/harness2.git
+git clone --branch main https://github.com/Notesong/harness2.git
 cd harness2
 uv venv --python 3.12 .venv
 uv pip install --python .venv/Scripts/python.exe -e '.[render]'
