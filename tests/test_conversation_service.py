@@ -302,7 +302,7 @@ class ConversationServiceTests(unittest.TestCase):
         self.jobs.jobs[record["id"]], self.jobs.active_id = record, record["id"]
         env = self.service.run_environment(record, {"ordinary": "value"})
         self.assertEqual(env["HARNESS2_CONVERSATION_ID"], identifier)
-        self.assertEqual(env["HARNESS2_CONVERSATION_WORKSPACE"], str(self.root))
+        self.assertEqual(Path(env["HARNESS2_CONVERSATION_WORKSPACE"]).resolve(), self.root.resolve())
         self.assertEqual(env["ordinary"], "value")
         with self.assertRaises(BusyError):
             self.service.command(identifier, "start", {})

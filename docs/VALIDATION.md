@@ -515,8 +515,8 @@ CP1252 output decoding assumption and corrected rerun are retained locally.
 
 ### Conversational sidecar validation boundaries
 
-The final Windows suite before the platform gate passed **342 tests** (two
-platform-specific skips), and **39 Node view tests** passed. A subsequent policy
+The final native Windows suite passed **346 tests** (two
+platform-specific skips), and **39 Node view tests** passed. A policy
 check restricts conversation-enabled benchmark runs to Windows: POSIX phase
 cancellation does not contain the bridge's separate native process groups.
 This is an explicit support limit, not a claim established by mocked owners.
