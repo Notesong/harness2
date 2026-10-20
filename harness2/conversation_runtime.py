@@ -26,6 +26,8 @@ from .locking import atomic_replace, file_lock
 CONVERSATION_ENV = "HARNESS2_CONVERSATION_ID"
 WORKSPACE_ENV = "HARNESS2_CONVERSATION_WORKSPACE"
 _ID = re.compile(r"[a-f0-9]{32}\Z")
+_NATIVE_SESSION = re.compile(r"ses_[A-Za-z0-9]{1,128}\Z")
+_NATIVE_MESSAGE = re.compile(r"msg_[A-Za-z0-9]{1,128}\Z")
 MAX_PRIVATE = 1024 * 1024
 
 
@@ -89,6 +91,85 @@ def read_json(path: Path) -> dict:
     if not isinstance(value, dict):
         raise ValueError("Conversation runtime record must be an object.")
     return value
+
+
+def _native_ancestry(session_id, info):
+    values = (session_id, info.get("id"), info.get("parentID"))
+    patterns = (_NATIVE_SESSION, _NATIVE_MESSAGE, _NATIVE_MESSAGE)
+    if (info.get("role") != "assistant" or info.get("sessionID", session_id) != session_id
+            or any(not isinstance(value, str) or not pattern.fullmatch(value)
+                   for value, pattern in zip(values, patterns))):
+        return {}
+    return dict(zip(("native_session_id", "native_message_id", "native_parent_id"), values))
+
+
+def link_native_records(store, conversation_id, session_id, native_messages, *, outboxes=()):
+    """Append verified ancestry to old posts; preserve their original message events.
+
+    This also works on retained native records without starting a model/session.
+    A tool link requires its saved request, acknowledgement, and native tool
+    output to agree on the actual ledger message identity.
+    """
+    view = store.get(conversation_id)
+    workers = {worker["id"]: worker["session_id"] for worker in view["workers"]}
+    native = {row.get("info", {}).get("id"): row for row in native_messages
+              if _native_ancestry(session_id, row.get("info", {}))}
+    candidates = {message["session_message_id"]: message for message in view["messages"]
+                  if message["role"] == "assistant" and not message.get("native_session_id")
+                  and workers.get(message["worker_id"]) == session_id}
+    linked = set()
+
+    def link(message, row):
+        if message["id"] in linked:
+            return
+        store.link_native_message(conversation_id, message["id"],
+                                  **_native_ancestry(session_id, row["info"]))
+        linked.add(message["id"])
+
+    for transport, message in candidates.items():
+        row = native.get(transport)
+        text = "\n".join(part["text"] for part in row.get("parts", [])
+                         if part.get("type") == "text" and isinstance(part.get("text"), str)).strip() if row else ""
+        if (row and row["info"].get("finish") not in (None, "tool-calls", "unknown")
+                and not row["info"].get("error") and not row["info"].get("has_error")
+                and text == message["text"]):
+            link(message, row)
+    for outbox in outboxes:
+        outbox = Path(outbox)
+        for transport, message in candidates.items():
+            request_id = transport.removeprefix("tool:")
+            if not transport.startswith("tool:") or not _ID.fullmatch(request_id):
+                continue
+            request_path = outbox / "requests" / (request_id + ".json")
+            reply_path = outbox / "replies" / request_path.name
+            if not config.long_path(request_path).is_file() or not config.long_path(reply_path).is_file():
+                continue
+            request, reply = read_json(request_path), read_json(reply_path)
+            row = native.get(request.get("native_message_id"))
+            acknowledged = reply.get("record")
+            if (not row or request.get("kind") != "message" or request.get("request_id") != request_id
+                    or request.get("session_id") != session_id or reply.get("ok") is not True
+                    or not isinstance(acknowledged, dict) or acknowledged.get("id") != message["id"]
+                    or acknowledged.get("text") != message["text"]):
+                continue
+            for part in row.get("parts", []):
+                state = part.get("state", {})
+                if (part.get("type") != "tool" or part.get("tool") != "harness2_conversation"
+                        or not isinstance(state, dict) or not isinstance(state.get("input"), dict)
+                        or state.get("status") != "completed"
+                        or state["input"].get("kind") != "message"
+                        or state["input"].get("text") != request.get("text")):
+                    continue
+                try:
+                    output = json.loads(state.get("output", ""))
+                except (ValueError, TypeError):
+                    continue
+                if (isinstance(output, dict) and output.get("ok") is True
+                        and isinstance(output.get("record"), dict)
+                        and output["record"].get("id") == message["id"]):
+                    link(message, row)
+                    break
+    return len(linked)
 
 
 def working_directory(environment, label: str) -> Path | None:
@@ -223,6 +304,7 @@ class SessionBridge:
                 kind = request.get("kind")
                 if kind == "message":
                     origin = "legacy"
+                    native = None
                     if native_messages is not None:
                         native = next((item["info"] for item in native_messages
                                        if item.get("info", {}).get("id") == request.get("native_message_id")
@@ -238,6 +320,7 @@ class SessionBridge:
                         self.conversation_id, _redact(request.get("text", ""), self.environment),
                         worker_id=self.worker_id, session_message_id="tool:" + path.stem,
                         origin=origin,
+                        **(_native_ancestry(self.client.session_id, native) if native else {}),
                     )
                 elif kind == "decision":
                     self._check_update(request)
@@ -316,6 +399,8 @@ class SessionBridge:
             raise ValueError("Working continuity is full; consolidate the checkpoint before adding more.")
 
     def _answers(self, native_messages):
+        link_native_records(self.store, self.conversation_id, self.client.session_id,
+                            native_messages, outboxes=(self.outbox,))
         self._worker_started |= any(message.get("info", {}).get("role") == "user"
                                     for message in native_messages)
         view = self.store.get(self.conversation_id)
@@ -372,7 +457,8 @@ class SessionBridge:
                     continue
                 elif text:
                     self.store.assistant(self.conversation_id, text, worker_id=self.worker_id,
-                                         session_message_id=native_id, reply_to=[pending[parent]])
+                                         session_message_id=native_id, reply_to=[pending[parent]],
+                                         **_native_ancestry(self.client.session_id, info))
                     self._native_seen.add(native_id)
                     pending.pop(parent)
                 else:

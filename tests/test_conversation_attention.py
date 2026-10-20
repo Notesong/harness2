@@ -97,6 +97,40 @@ class ConversationAttentionTests(unittest.TestCase):
             with self.subTest(setting=setting), self.assertRaises(ValueError):
                 self.attention.settings(setting)
 
+    def test_duplicate_reply_is_one_unread_and_a_previously_read_tool_post_stays_read(self):
+        user = self.conversations.enqueue(self.identifier, "A human turn")
+        self.conversations.transition(self.identifier, user["id"], "delivered", session_message_id="msg_human")
+        tool = self.conversations.assistant(self.identifier, "One reply", worker_id="worker",
+            session_message_id="tool:" + "a" * 32, origin="reply", native_session_id="ses_fixture",
+            native_message_id="msg_tool", native_parent_id="msg_human")
+        self.assertEqual(self.decorate()["unread_count"], 1)
+        self.attention.read(self.identifier, [tool["id"]])
+        final = self.conversations.assistant(self.identifier, "One reply", worker_id="worker",
+            session_message_id="msg_final", reply_to=[user["id"]], native_session_id="ses_fixture",
+            native_message_id="msg_final", native_parent_id="msg_human")
+        self.assertEqual(self.decorate()["unread_count"], 0)
+        before = self.history()
+        self.attention.settings({"enabled": True})
+        self.assertFalse(self.claim(tool)["claimed"])
+        self.assertFalse(self.claim(final)["claimed"])
+        self.assertEqual(self.history(), before)
+
+    def test_unread_duplicate_group_exposes_only_its_canonical_reply(self):
+        user = self.conversations.enqueue(self.identifier, "A human turn")
+        self.conversations.transition(self.identifier, user["id"], "delivered", session_message_id="msg_human")
+        self.conversations.assistant(self.identifier, "One reply", worker_id="worker",
+            session_message_id="tool:" + "a" * 32, origin="reply", native_session_id="ses_fixture",
+            native_message_id="msg_tool", native_parent_id="msg_human")
+        final = self.conversations.assistant(self.identifier, "One reply", worker_id="worker",
+            session_message_id="msg_final", reply_to=[user["id"]], native_session_id="ses_fixture",
+            native_message_id="msg_final", native_parent_id="msg_human")
+        attention = self.decorate()
+        self.assertEqual(attention["unread_count"], 1)
+        self.assertEqual(attention["unread_message_ids"], [final["id"]])
+        self.assertEqual([item["id"] for item in attention["attention_messages"]], [final["id"]])
+        self.attention.read(self.identifier, [final["id"]])
+        self.assertEqual(self.decorate()["unread_count"], 0)
+
     def test_atomic_claims_allow_only_one_browser_attempt_across_native_processes(self):
         self.attention.settings({"enabled": True})
         message = self.message()

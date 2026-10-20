@@ -35,6 +35,10 @@ MAX_RECOVERY_BYTES = 32 * 1024
 _IDENTIFIER = re.compile(r"[a-f0-9]{32}\Z")
 _EVENT = re.compile(r"([0-9]{8})-([a-f0-9]{64})\.json\Z")
 _TERMINAL = frozenset({"closed", "ended", "completed", "failed", "cancelled", "stopped"})
+_NATIVE_FIELDS = ("native_session_id", "native_message_id", "native_parent_id")
+_NATIVE_SESSION = re.compile(r"ses_[A-Za-z0-9]{1,128}\Z")
+_NATIVE_MESSAGE = re.compile(r"msg_[A-Za-z0-9]{1,128}\Z")
+_TOOL_MESSAGE = re.compile(r"tool:[a-f0-9]{32}\Z")
 
 
 class CorruptConversationError(CorruptProfileError):
@@ -69,6 +73,21 @@ def _identifiers(value, field):
 def _strings(value, field):
     values = _sequence(value, field)
     return [_text(item, field, 4_096, empty=False) for item in values]
+
+
+def _native_metadata(data):
+    """Native ancestry is explicit evidence, never inferred from visible text."""
+    present = set(_NATIVE_FIELDS).intersection(data)
+    if not present:
+        return {}
+    if present != set(_NATIVE_FIELDS):
+        raise ValueError("Native message ancestry needs session, message, and parent IDs together.")
+    for key, pattern in zip(_NATIVE_FIELDS, (_NATIVE_SESSION, _NATIVE_MESSAGE, _NATIVE_MESSAGE)):
+        if not isinstance(data[key], str) or not pattern.fullmatch(data[key]):
+            raise ValueError("Invalid native message ancestry ID.")
+    if data["native_message_id"] == data["native_parent_id"]:
+        raise ValueError("A native message cannot be its own parent.")
+    return {key: data[key] for key in _NATIVE_FIELDS}
 
 
 class ConversationStore:
@@ -128,6 +147,45 @@ class ConversationStore:
             raise ValueError("Worker does not belong to this conversation.")
         return worker
 
+    @classmethod
+    def _validate_native(cls, view, message, native):
+        if not native:
+            return
+        worker = cls._known_worker(view, message["worker_id"])
+        if worker["session_id"] != native["native_session_id"]:
+            raise ValueError("Native message ancestry must belong to its worker's session.")
+        transport = message["session_message_id"]
+        if transport.startswith("msg_") and transport != native["native_message_id"]:
+            raise ValueError("Native message ancestry conflicts with its transport message ID.")
+
+    @classmethod
+    def _project_aliases(cls, view):
+        """Keep both transports in history; mark only proven reply repetitions."""
+        canonical = {}
+        for message in view["messages"]:
+            message.pop("duplicate_of", None)
+            native = _native_metadata(message)
+            if (message["role"] != "assistant" or not native or message.get("origin") != "reply"
+                    or not message["reply_to"] or message["session_message_id"] != native["native_message_id"]):
+                continue
+            anchored = any(
+                (source := cls._message(view, identifier))["role"] == "user"
+                and source["worker_id"] == message["worker_id"]
+                and source["session_message_id"] == native["native_parent_id"]
+                for identifier in message["reply_to"]
+            )
+            if anchored:
+                key = (message["worker_id"], native["native_session_id"], native["native_parent_id"], message["text"])
+                canonical.setdefault(key, message["id"])
+        for message in view["messages"]:
+            native = _native_metadata(message)
+            if (message["role"] == "assistant" and native
+                    and message.get("origin") in {"legacy", "reply"}
+                    and _TOOL_MESSAGE.fullmatch(message["session_message_id"])):
+                key = (message["worker_id"], native["native_session_id"], native["native_parent_id"], message["text"])
+                if key in canonical:
+                    message["duplicate_of"] = canonical[key]
+
     @staticmethod
     def _expire(view, worker_id, reason, event):
         for message in view["messages"]:
@@ -180,6 +238,7 @@ class ConversationStore:
             if view["status"] != "open":
                 raise ValueError("Conversation is closed.")
             cls._known_worker(view, data["worker_id"])
+            cls._validate_native(view, data, _native_metadata(data))
             if len(view["messages"]) >= MAX_MESSAGES or any(m["id"] == data["id"] for m in view["messages"]):
                 raise ValueError("Conversation message limit or ID collision.")
             for message_id in data["reply_to"]:
@@ -193,6 +252,18 @@ class ConversationStore:
                 raise ValueError("Invalid visible message origin.")
             view["messages"].append({**data, **stamp, "origin": origin,
                                      "status": "answered", "updated_at": event["time"]})
+        elif action == "assistant_native_linked":
+            message = cls._message(view, data["message_id"])
+            if message["role"] != "assistant":
+                raise ValueError("Only assistant messages can receive native ancestry links.")
+            native = _native_metadata(data)
+            if not native:
+                raise ValueError("A native message link needs ancestry IDs.")
+            cls._validate_native(view, message, native)
+            prior = _native_metadata(message)
+            if prior and prior != native:
+                raise ValueError("Native message ancestry cannot change.")
+            message.update(native)
         elif action == "worker_ended":
             worker = cls._known_worker(view, data["worker_id"])
             worker.update(status="ended", reason=data["reason"], ended_at=event["time"])
@@ -239,6 +310,7 @@ class ConversationStore:
                     view["observations"].append({**data, **stamp})
                 else:
                     raise ValueError("Unknown working continuity event.")
+            self._project_aliases(view)
         except (KeyError, TypeError, ValueError) as exc:
             raise CorruptConversationError("Conversation history refers to invalid state.") from exc
         return view, history, working
@@ -339,27 +411,54 @@ class ConversationStore:
             self._append_history(conversation_id, view, history, "message_transitioned", data)
             return self._state(conversation_id)[0]
 
-    def assistant(self, conversation_id, text, *, worker_id, session_message_id="", reply_to=(), origin=None):
+    def assistant(self, conversation_id, text, *, worker_id, session_message_id="", reply_to=(), origin=None,
+                  native_session_id=None, native_message_id=None, native_parent_id=None):
+        native = _native_metadata({key: value for key, value in zip(
+            _NATIVE_FIELDS, (native_session_id, native_message_id, native_parent_id)) if value is not None})
         data = {"id": uuid.uuid4().hex, "role": "assistant",
                 "text": _text(text, "visible assistant message", MAX_MESSAGE, empty=False),
                 "worker_id": _worker(worker_id, empty=False),
                 "session_message_id": _text(session_message_id, "native message ID", 512),
-                  "reply_to": _identifiers(reply_to, "answer references"),
-                  "origin": origin or ("reply" if reply_to else "legacy")}
+                "reply_to": _identifiers(reply_to, "answer references"),
+                "origin": origin or ("reply" if reply_to else "legacy"), **native}
         with self._archive._locked():
             view, history, _ = self._state(conversation_id)
-            if session_message_id:
+            self._validate_native(view, data, native)
+            if session_message_id or native:
                 prior = next((message for message in view["messages"] if message["role"] == "assistant"
                               and (message["worker_id"] == worker_id or
-                                   re.fullmatch(r"tool:[a-f0-9]{32}", session_message_id))
-                              and message["session_message_id"] == session_message_id), None)
+                                   _TOOL_MESSAGE.fullmatch(session_message_id) or
+                                   native and message.get("native_session_id") == native["native_session_id"])
+                              and message["session_message_id"] == session_message_id
+                              and (session_message_id or message.get("native_message_id") == native["native_message_id"])), None)
                 if prior:
                     if (prior["text"] != data["text"]
-                            or data["reply_to"] and prior["reply_to"] != data["reply_to"]):
+                            or data["reply_to"] and prior["reply_to"] != data["reply_to"]
+                            or native and _native_metadata(prior) and _native_metadata(prior) != native):
                         raise ValueError("A completed native assistant message cannot change.")
                     return prior
             self._append_history(conversation_id, view, history, "assistant_added", data)
             return self._message(self._state(conversation_id)[0], data["id"])
+
+    def link_native_message(self, conversation_id, message_id, *, native_session_id, native_message_id, native_parent_id):
+        """Append verified native ancestry without rewriting the original post."""
+        data = {"message_id": _conversation_id(message_id), **_native_metadata({
+            "native_session_id": native_session_id, "native_message_id": native_message_id,
+            "native_parent_id": native_parent_id})}
+        with self._archive._locked():
+            view, history, _ = self._state(conversation_id)
+            message = self._message(view, message_id)
+            native = _native_metadata(data)
+            if message["role"] != "assistant":
+                raise ValueError("Only assistant messages can receive native ancestry links.")
+            self._validate_native(view, message, native)
+            prior = _native_metadata(message)
+            if prior:
+                if prior != native:
+                    raise ValueError("Native message ancestry cannot change.")
+                return message
+            self._append_history(conversation_id, view, history, "assistant_native_linked", data)
+            return self._message(self._state(conversation_id)[0], message_id)
 
     def end_worker(self, conversation_id, worker_id, reason):
         data = {"worker_id": _worker(worker_id, empty=False),

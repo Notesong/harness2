@@ -37,6 +37,21 @@ class ConversationsTests(unittest.TestCase):
     def bind(self, worker="worker-one"):
         return self.store.bind_worker(self.identifier, worker, label="Synthetic worker", session_id="session-one")
 
+    def bind_native(self, worker="worker-one", session="ses_TestSession"):
+        return self.store.bind_worker(self.identifier, worker, label="Synthetic native worker", session_id=session)
+
+    @staticmethod
+    def ancestry(message, parent="msg_UserTurn", session="ses_TestSession"):
+        return {"native_session_id": session, "native_message_id": message, "native_parent_id": parent}
+
+    def delivered_native(self, text="A question", parent="msg_UserTurn"):
+        message = self.store.enqueue(self.identifier, text)
+        self.store.transition(self.identifier, message["id"], "delivered", session_message_id=parent)
+        return message
+
+    def history_bytes(self):
+        return {path: path.read_bytes() for path in (self.store.root / self.identifier / "history/events").glob("*.json")}
+
     def profile_bytes(self):
         return {path: path.read_bytes() for path in self.profiles.root.rglob("*.json")}
 
@@ -143,6 +158,157 @@ class ConversationsTests(unittest.TestCase):
                                           session_message_id="msg_native_reply")
         self.assertNotEqual(later_native["id"], native["id"])
         self.assertEqual(len(restored.get(self.identifier)["messages"]), 3)
+
+    def test_native_ancestry_projects_exact_tool_reply_alias_without_rewriting_history(self):
+        self.bind_native()
+        user = self.delivered_native()
+        tool = self.store.assistant(self.identifier, "An exact reply.\n", worker_id="worker-one",
+            session_message_id="tool:" + "a" * 32, origin="reply", **self.ancestry("msg_ToolReply"))
+        raw_before = self.history_bytes()
+        terminal = self.store.assistant(self.identifier, tool["text"], worker_id="worker-one",
+            session_message_id="msg_TerminalReply", reply_to=[user["id"]], **self.ancestry("msg_TerminalReply"))
+        projected = self.store.get(self.identifier)["messages"]
+        self.assertEqual(len(projected), 3)
+        self.assertEqual(projected[1]["duplicate_of"], terminal["id"])
+        self.assertNotIn("duplicate_of", projected[2])
+        self.assertEqual(projected[0]["answered_by"], terminal["id"])
+        self.assertEqual({path: path.read_bytes() for path in raw_before}, raw_before)
+        raw = [json.loads(value) for value in self.history_bytes().values()]
+        self.assertEqual(len([event for event in raw if event["action"] == "assistant_added"]), 2)
+        self.assertNotIn("duplicate_of", json.dumps(raw))
+        self.assertEqual(ConversationStore(self.root).get(self.identifier)["messages"], projected)
+
+    def test_native_alias_needs_exact_text_human_anchor_and_reply_origin(self):
+        self.bind_native()
+        user = self.delivered_native()
+        visible = []
+        for index, (text, origin, parent) in enumerate((
+            ("A reply", "reply", "msg_OtherTurn"),
+            ("A reply ", "reply", "msg_UserTurn"),
+            ("A reply", "model_initiated", "msg_UserTurn"),
+            ("A useful progress update", "reply", "msg_UserTurn"),
+        )):
+            visible.append(self.store.assistant(self.identifier, text, worker_id="worker-one",
+                session_message_id="tool:" + str(index) * 32, origin=origin,
+                **self.ancestry("msg_Tool" + str(index), parent=parent)))
+        legacy = self.store.assistant(self.identifier, "A reply", worker_id="worker-one",
+            session_message_id="tool:" + "a" * 32, **self.ancestry("msg_LegacyTool"))
+        terminal = self.store.assistant(self.identifier, "A reply", worker_id="worker-one",
+            session_message_id="msg_Terminal", reply_to=[user["id"]], **self.ancestry("msg_Terminal"))
+        messages = {item["id"]: item for item in self.store.get(self.identifier)["messages"]}
+        self.assertTrue(all("duplicate_of" not in messages[item["id"]] for item in visible))
+        self.assertEqual(messages[legacy["id"]]["origin"], "legacy")
+        self.assertEqual(messages[legacy["id"]]["duplicate_of"], terminal["id"])
+
+        unanchored = self.delivered_native(parent="msg_ActualUser")
+        tool = self.store.assistant(self.identifier, "An unanchored reply", worker_id="worker-one",
+            session_message_id="tool:" + "b" * 32, origin="reply", **self.ancestry("msg_UnanchoredTool", parent="msg_DifferentUser"))
+        self.store.assistant(self.identifier, tool["text"], worker_id="worker-one", session_message_id="msg_UnanchoredFinal",
+            reply_to=[unanchored["id"]], **self.ancestry("msg_UnanchoredFinal", parent="msg_DifferentUser"))
+        self.assertNotIn("duplicate_of", next(item for item in self.store.get(self.identifier)["messages"] if item["id"] == tool["id"]))
+
+    def test_same_text_in_distinct_native_turns_workers_and_sessions_is_preserved(self):
+        self.bind_native()
+        early_tool = self.store.assistant(self.identifier, "Hello", worker_id="worker-one", origin="reply",
+            session_message_id="tool:" + "a" * 32, **self.ancestry("msg_EarlyTool", parent="msg_EarlyUser"))
+        later_user = self.delivered_native(parent="msg_LaterUser")
+        self.store.assistant(self.identifier, "Hello", worker_id="worker-one", session_message_id="msg_LaterReply",
+            reply_to=[later_user["id"]], **self.ancestry("msg_LaterReply", parent="msg_LaterUser"))
+        self.store.end_worker(self.identifier, "worker-one", "Restarted")
+        self.bind_native("worker-two")
+        resumed_user = self.delivered_native(parent="msg_EarlyUser")
+        self.store.assistant(self.identifier, "Hello", worker_id="worker-two", session_message_id="msg_ResumedReply",
+            reply_to=[resumed_user["id"]], **self.ancestry("msg_ResumedReply", parent="msg_EarlyUser"))
+        self.store.end_worker(self.identifier, "worker-two", "Another session")
+        self.bind_native("worker-three", session="ses_AnotherSession")
+        another_user = self.delivered_native(parent="msg_EarlyUser")
+        self.store.assistant(self.identifier, "Hello", worker_id="worker-three", session_message_id="msg_NewSessionReply",
+            reply_to=[another_user["id"]], **self.ancestry("msg_NewSessionReply", parent="msg_EarlyUser", session="ses_AnotherSession"))
+        messages = self.store.get(self.identifier)["messages"]
+        self.assertTrue(all("duplicate_of" not in item for item in messages))
+        self.assertEqual(next(item for item in messages if item["id"] == early_tool["id"])["text"], "Hello")
+        self.assertEqual(len([item for item in messages if item["role"] == "assistant"]), 4)
+
+    def test_native_link_enrichment_is_append_only_idempotent_and_works_after_close(self):
+        self.bind_native()
+        user = self.delivered_native()
+        tool = self.store.assistant(self.identifier, "A retained reply", worker_id="worker-one",
+            session_message_id="tool:" + "a" * 32, origin="reply")
+        terminal = self.store.assistant(self.identifier, tool["text"], worker_id="worker-one",
+            session_message_id="msg_RetainedFinal", reply_to=[user["id"]])
+        self.store.finish(self.identifier, "Finished before native ancestry was recovered")
+        raw_before = self.history_bytes()
+        self.store.link_native_message(self.identifier, terminal["id"], **self.ancestry("msg_RetainedFinal"))
+        linked = self.store.link_native_message(self.identifier, tool["id"], **self.ancestry("msg_RetainedTool"))
+        self.assertEqual(linked["duplicate_of"], terminal["id"])
+        self.assertEqual({path: path.read_bytes() for path in raw_before}, raw_before)
+        raw_after = self.history_bytes()
+        self.assertEqual(len(raw_after), len(raw_before) + 2)
+        additions = [json.loads(value) for path, value in raw_after.items() if path not in raw_before]
+        self.assertTrue(all(event["action"] == "assistant_native_linked" for event in additions))
+        self.assertEqual(self.store.link_native_message(self.identifier, tool["id"], **self.ancestry("msg_RetainedTool")), linked)
+        self.assertEqual(self.history_bytes(), raw_after)
+        for changes in ({"native_parent_id": "msg_ChangedParent"}, {"native_message_id": "msg_ChangedMessage"}):
+            with self.subTest(changes=changes), self.assertRaisesRegex(ValueError, "cannot change"):
+                self.store.link_native_message(self.identifier, tool["id"], **(self.ancestry("msg_RetainedTool") | changes))
+        self.assertEqual(self.history_bytes(), raw_after)
+
+    def test_native_metadata_rejects_partial_malformed_conflicting_and_cross_session_links(self):
+        self.bind_native()
+        user = self.delivered_native()
+        tool = self.store.assistant(self.identifier, "A tool update", worker_id="worker-one", session_message_id="tool:" + "a" * 32)
+        before = self.history_bytes()
+        invalid = (
+            {"native_session_id": "ses_TestSession"},
+            self.ancestry("msg_bad_id"),
+            self.ancestry("msg_Tool", session="ses_bad_id"),
+            self.ancestry("msg_Tool", parent="msg_Tool"),
+            self.ancestry("msg_Tool", session="ses_AnotherSession"),
+            self.ancestry("msg_" + "a" * 129),
+            self.ancestry("msg_Tool", parent="../outside"),
+        )
+        for native in invalid:
+            with self.subTest(native=native), self.assertRaises(ValueError):
+                self.store.assistant(self.identifier, "Rejected", worker_id="worker-one", **native)
+        with self.assertRaisesRegex(ValueError, "transport"):
+            self.store.assistant(self.identifier, "Rejected", worker_id="worker-one",
+                session_message_id="msg_Different", **self.ancestry("msg_Tool"))
+        with self.assertRaisesRegex(ValueError, "Only assistant"):
+            self.store.link_native_message(self.identifier, user["id"], **self.ancestry("msg_Tool"))
+        with self.assertRaisesRegex(ValueError, "worker's session"):
+            self.store.link_native_message(self.identifier, tool["id"], **self.ancestry("msg_Tool", session="ses_AnotherSession"))
+        self.assertEqual(self.history_bytes(), before)
+
+    def test_native_message_replays_are_stable_even_after_worker_restart(self):
+        self.bind_native()
+        user = self.delivered_native()
+        packet = {"session_message_id": "msg_Final", "reply_to": [user["id"]], **self.ancestry("msg_Final")}
+        first = self.store.assistant(self.identifier, "A committed final reply", worker_id="worker-one", **packet)
+        before = self.history_bytes()
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+            replies = list(pool.map(lambda _: self.store.assistant(self.identifier, first["text"], worker_id="worker-one", **packet), range(4)))
+        self.assertTrue(all(reply == first for reply in replies))
+        self.assertEqual(self.history_bytes(), before)
+        self.store.end_worker(self.identifier, "worker-one", "Restarted")
+        self.bind_native("worker-two")
+        before = self.history_bytes()
+        replay = self.store.assistant(self.identifier, first["text"], worker_id="worker-two",
+            **{key: value for key, value in packet.items() if key != "reply_to"})
+        self.assertEqual(replay, first)
+        self.assertEqual(self.history_bytes(), before)
+        with self.assertRaisesRegex(ValueError, "cannot change"):
+            self.store.assistant(self.identifier, first["text"], worker_id="worker-two",
+                **(packet | {"native_parent_id": "msg_ChangedParent"}))
+
+    def test_journal_replay_rejects_unvalidated_native_ancestry(self):
+        self.bind_native()
+        tool = self.store.assistant(self.identifier, "A tool update", worker_id="worker-one", session_message_id="tool:" + "a" * 32)
+        with self.store._archive._locked():
+            _, history, _ = self.store._state(self.identifier)
+            self.store._archive._append(self.store.root / self.identifier / "history", history, "assistant_native_linked", {
+                "message_id": tool["id"], "native_session_id": "ses_TestSession"})
+        with self.assertRaises(CorruptConversationError):
+            self.store.get(self.identifier)
 
     def test_committed_decision_request_retries_across_workers_and_rejects_changes(self):
         self.bind()

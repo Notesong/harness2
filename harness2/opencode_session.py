@@ -54,6 +54,9 @@ conversation records. These source IDs are 32-hex ledger IDs, not OpenCode msg_
 IDs; native transport identity is recorded separately. Use harness2_conversation to speak occasionally when
 there is uncertainty, surprise, or a meaningful stage completion; avoid flooding
 the conversation. Keep official task answers and deliverable files separate.
+Reply to a human conversation message with your normal assistant response.
+Do not publish that same reply through the conversation tool as well. Tool
+messages are for distinct progress updates or contact during ongoing work.
 Recovery is a factual ledger: completed means done, planned means not yet done.
 Preserve unresolved questions and decision references through compaction.
 If a recorded conversation decision actually changes a proposed harness, include

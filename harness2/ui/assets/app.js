@@ -1173,7 +1173,7 @@
         const key = `${conversation.id}/${item.id}`;
         if (attentionSeenIds.has(key)) continue;
         attentionSeenIds.add(key);
-        if (firstPoll || !state.notifications.enabled || item.role !== "assistant" || item.origin !== "model_initiated" || conversationFocused(conversation.id)) continue;
+        if (firstPoll || !state.notifications.enabled || item.role !== "assistant" || item.origin !== "model_initiated" || item.duplicate_of || conversationFocused(conversation.id)) continue;
         showConversationNotification(conversation, item);
       }
     }
@@ -1205,8 +1205,9 @@
     const height = window.innerHeight || document.documentElement?.clientHeight || 0;
     const width = window.innerWidth || document.documentElement?.clientWidth || 0;
     const confirmed = readConfirmedIds.get(conversation.id) || new Set();
+    const groups = conversationMessageGroups(conversation);
     return (conversation.messages || []).filter((item) => item.role === "assistant" && unread.has(item.id) && !confirmed.has(item.id)).filter((item) => {
-      const node = document.getElementById(`conversation-message-${item.id}`);
+      const node = document.getElementById(`conversation-message-${groups.canonical.get(item.id) || item.id}`);
       if (typeof node?.getBoundingClientRect !== "function") return false;
       const box = node.getBoundingClientRect();
       return box.width > 0 && box.height > 0 && box.bottom > Math.max(0, area.top) && box.top < Math.min(height, area.bottom) && box.right > Math.max(0, area.left) && box.left < Math.min(width, area.right);
@@ -1402,6 +1403,40 @@
       updateConversationComposer(null);
     }
   }
+  function conversationMessageGroups(conversation) {
+    const messages = conversation.messages || [];
+    const byId = new Map(messages.map((item) => [item.id, item]));
+    const canonical = new Map();
+    const duplicates = new Map();
+    for (const item of messages) {
+      const target = byId.get(item.duplicate_of);
+      // Only the server's verified pairing folds records. Missing or invalid
+      // targets remain visible rather than hiding an unpaired message.
+      if (item.role !== "assistant" || target?.role !== "assistant" || target.id === item.id || target.duplicate_of) continue;
+      canonical.set(item.id, target.id);
+      if (!duplicates.has(target.id)) duplicates.set(target.id, []);
+      duplicates.get(target.id).push(item);
+    }
+    return { messages: messages.filter((item) => !canonical.has(item.id)), canonical, duplicates };
+  }
+  function conversationMessageLabel(item) {
+    const labels = { queued: "Queued", delivered: "Delivered to worker", answered: "Answered", undelivered: "Not delivered", failed: "Failed" };
+    if (item.role !== "assistant" || item.status !== "answered") return labels[item.status] || human(item.status || "recorded");
+    if (item.reply_to?.length) return "Reply";
+    if (item.origin === "reply") return "Reply update";
+    if (item.origin === "model_initiated") return "Model-initiated message";
+    return "Session message";
+  }
+  function focusConversationMessage(conversation, id) {
+    const canonical = conversationMessageGroups(conversation).canonical.get(id);
+    if (canonical) {
+      const disclosure = document.getElementById(`conversation-duplicates-${canonical}`);
+      if (disclosure) disclosure.open = true;
+    }
+    const node = document.getElementById(`conversation-message-${id}`);
+    node?.scrollIntoView({ behavior: "smooth", block: "center" });
+    node?.focus({ preventScroll: true });
+  }
   function renderConversationDetail(conversation) {
     if (conversation.id !== selectedConversationId) return;
     updateConversationComposer(conversation);
@@ -1441,17 +1476,31 @@
     const messages = $("#conversation-messages");
     const priorScroll = messages.scrollTop;
     const follow = messages.scrollHeight - messages.scrollTop - messages.clientHeight < 80;
-    messages.replaceChildren(...(conversation.messages || []).map((item) => {
+    const groups = conversationMessageGroups(conversation);
+    function renderMessage(item, folded = false) {
       const article = element("article", `conversation-message ${item.role === "user" ? "from-user" : "from-model"}`);
       article.id = `conversation-message-${item.id}`;
       article.tabIndex = -1;
       const meta = element("div", "conversation-message-meta");
       const source = conversation.workers?.find((candidate) => candidate.id === item.worker_id);
       const labels = { queued: "Queued", delivered: "Delivered to worker", answered: "Answered", undelivered: "Not delivered", failed: "Failed" };
-      const deliveryLabel = item.role === "assistant" && item.status === "answered" && !item.reply_to?.length ? "Model message" : labels[item.status] || human(item.status || "recorded");
+      const deliveryLabel = conversationMessageLabel(item);
       meta.append(element("strong", "", item.role === "user" ? "You" : name), element("span", `conversation-delivery delivery-${Object.hasOwn(labels, item.status) ? item.status : "unknown"}`, deliveryLabel));
       article.append(meta, element("p", "conversation-visible-text", item.text), element("small", "", [source?.label || item.worker_id, when(item.created_at)].filter(Boolean).join(" · ")));
       if (item.reason) article.append(element("p", "conversation-delivery-reason", item.reason));
+      if (folded) article.append(element("small", "", `Record ${item.id} · same reply as ${item.duplicate_of}`));
+      return article;
+    }
+    messages.replaceChildren(...groups.messages.map((item) => {
+      const article = renderMessage(item);
+      const duplicates = groups.duplicates.get(item.id) || [];
+      if (duplicates.length) {
+        const disclosure = element("details", "conversation-workers");
+        disclosure.id = `conversation-duplicates-${item.id}`;
+        disclosure.open = document.getElementById(disclosure.id)?.open || false;
+        disclosure.append(element("summary", "", `Matching session ${duplicates.length === 1 ? "record" : "records"} · ${count(duplicates.length)}`), element("p", "field-help", "This reply was also recorded through a session tool. Both records remain in the archive."), ...duplicates.map((duplicate) => renderMessage(duplicate, true)));
+        article.append(disclosure);
+      }
       return article;
     }));
     if (!(conversation.messages || []).length) messages.append(element("p", "conversation-first-message", worker ? "The session is ready. Say hello, or ask what it is working on." : "Your visible conversation will appear here."));
@@ -1484,7 +1533,7 @@
     for (const decision of conversation.decisions || []) {
       const article = element("article", "conversation-decision");
       article.append(element("span", "soft-tag", human(decision.status)), element("p", "conversation-visible-text", decision.text), element("p", "field-help", decision.why));
-      for (const id of decision.source_message_ids || []) article.append(conversationButton(`Source message ${id.slice(0, 8)} ↗`, () => { const node = document.getElementById(`conversation-message-${id}`); node?.scrollIntoView({ behavior: "smooth", block: "center" }); node?.focus({ preventScroll: true }); }, "text-button"));
+      for (const id of decision.source_message_ids || []) article.append(conversationButton(`Source message ${id.slice(0, 8)} ↗`, () => focusConversationMessage(conversation, id), "text-button"));
       if (decision.supersedes_id) article.append(element("small", "", `Revises or reverts decision ${decision.supersedes_id}`));
       decisions.append(article);
     }

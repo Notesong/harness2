@@ -614,6 +614,21 @@ passed without model calls. The wheel SHA256 was
 `aad0996f967b614e72000ab9ba5573fce74c9fa50519f885bcb5b30ac2d45eef`;
 reports and the source manifest are in `.tmp/notifications-wheel-proof/`.
 
+The duplicate-reply follow-up passed 390 native Windows Python tests (two skips)
+and 56 frontend tests. Store/runtime tests cover exact native ancestry, late
+tool acknowledgements, different turns and workers, immutable-history linkage,
+and grouped unread state. The synthetic HTTP UI fixture explicitly uses an
+external runtime and guards against inheriting a real managed-model startup.
+
+A retained Owen conversation provided real OpenCode evidence of one exact
+tool-post/final-answer repetition. A read-only SQLite inspection plus saved
+request/acknowledgement records supported six append-only ancestry links. All
+19 original history events and all 10 messages remained unchanged; only the one
+proven duplicate pair was folded in Studio. Browser inspection confirmed that
+the original tool record remains accessible in its disclosure. This repair
+required no new model inference. The revised instruction to avoid posting a
+human reply through both channels has not yet been tested in a new model turn.
+
 From the checkout, with its development virtual environment installed:
 
 ```powershell

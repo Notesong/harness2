@@ -63,7 +63,10 @@ class Attention:
         with self.archive._locked():
             value = self._load()
         read = set(value["read"].get(conversation["id"], []))
-        unread = [item for item in conversation["messages"] if item["role"] == "assistant" and item["id"] not in read]
+        read.update(item["duplicate_of"] for item in conversation["messages"]
+                    if item.get("duplicate_of") and item["id"] in read)
+        unread = [item for item in conversation["messages"]
+                  if item["role"] == "assistant" and not item.get("duplicate_of") and item["id"] not in read]
         return {"unread_count": len(unread), "unread_message_ids": [item["id"] for item in unread],
                 "attention_messages": [{key: item[key] for key in ("id", "role", "origin", "reply_to", "created_at")}
                                        | {"text": item["text"][:240]} for item in unread]}
@@ -117,7 +120,8 @@ class Attention:
         message = next((item for item in view["messages"] if item["id"] == message_id), None)
         if message is None:
             raise ValueError("Notification message does not belong to this conversation.")
-        if message["role"] != "assistant" or message.get("origin") != "model_initiated":
+        if (message["role"] != "assistant" or message.get("origin") != "model_initiated"
+                or message.get("duplicate_of")):
             return {"claimed": False}
         with self.archive._locked():
             value = self._load()

@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Real archives with a substituted native client; no model inference here."""
 
+import json
 import shutil
 import tempfile
 import unittest
@@ -117,6 +118,58 @@ class ConversationRuntimeTests(unittest.TestCase):
         self.assertEqual(messages[0]["status"], "answered")
         self.assertEqual(messages[1]["text"], final["parts"][0]["text"])
         self.assertEqual(messages[1]["reply_to"], [question["id"]])
+
+    def test_identical_tool_post_and_final_answer_keep_records_but_share_display(self):
+        human = self.enqueue()
+        self.bridge._deliver()
+        tool = self.native("msg_tool", finish="tool-calls", text="")
+        reply = self.request(kind="message", text="The same visible reply.",
+                             native_message_id="msg_tool", native_messages=[tool])
+        final = self.native("msg_final", text="The same visible reply.")
+        self.bridge._answers([tool, final])
+        messages = self.store.get(self.identifier)["messages"]
+        self.assertEqual(len(messages), 3)
+        self.assertEqual(messages[0]["status"], "answered")
+        self.assertEqual(messages[1]["id"], reply["record"]["id"])
+        self.assertEqual(messages[1]["duplicate_of"], messages[2]["id"])
+        self.assertEqual(messages[2]["reply_to"], [human["id"]])
+
+    def test_late_tool_post_is_paired_after_the_terminal_reply_was_recorded(self):
+        self.enqueue()
+        self.bridge._deliver()
+        final = self.native("msg_final", text="The same visible reply.")
+        self.bridge._answers([final])
+        tool = self.native("msg_tool", finish="tool-calls", text="")
+        self.request(kind="message", text="The same visible reply.",
+                     native_message_id="msg_tool", native_messages=[tool, final])
+        messages = self.store.get(self.identifier)["messages"]
+        self.assertEqual(messages[2]["duplicate_of"], messages[1]["id"])
+
+    def test_retained_native_evidence_links_legacy_posts_without_rewriting_history(self):
+        human = self.enqueue()
+        self.bridge._deliver()
+        reply = self.request(kind="message", text="The same visible reply.", native_message_id="msg_tool")
+        final = self.store.assistant(self.identifier, "The same visible reply.",
+            worker_id=self.bridge.worker_id, session_message_id="msg_final", reply_to=[human["id"]])
+        directory = self.root / ".harness2" / "conversations" / self.identifier / "history" / "events"
+        before = {path.name: path.read_bytes() for path in directory.glob("*.json")}
+        self.assertTrue(before)
+        tool = self.native("msg_tool", finish="tool-calls", text="")
+        tool["parts"] = [{"type": "tool", "tool": "harness2_conversation", "state": {
+            "status": "completed", "input": {"kind": "message", "text": "The same visible reply."},
+            "output": json.dumps({"ok": True, "record": {"id": "f" * 32}}),
+        }}]
+        native = [tool, self.native("msg_final", text="The same visible reply.")]
+        arguments = (self.store, self.identifier, "ses_fixture", native)
+        self.assertEqual(runtime.link_native_records(*arguments, outboxes=(self.bridge.outbox,)), 1)
+        self.assertNotIn("duplicate_of", self.store.get(self.identifier)["messages"][1])
+        tool["parts"][0]["state"]["output"] = json.dumps(reply)
+        self.assertEqual(runtime.link_native_records(*arguments, outboxes=(self.bridge.outbox,)), 1)
+        self.assertEqual(runtime.link_native_records(*arguments, outboxes=(self.bridge.outbox,)), 0)
+        messages = self.store.get(self.identifier)["messages"]
+        self.assertEqual(messages[1]["duplicate_of"], final["id"])
+        for name, original in before.items():
+            self.assertEqual((directory / name).read_bytes(), original)
 
     def test_compaction_observations_only_count_actual_resumed_tool_identities(self):
         old = self.native("msg_old", parent="task", text="")

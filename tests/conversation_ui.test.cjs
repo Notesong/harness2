@@ -9,6 +9,10 @@ const test = require("node:test");
 const vm = require("node:vm");
 const flush = () => new Promise(setImmediate);
 function walk(node) { return [node, ...node.children.flatMap(walk)]; }
+function visibleText(node) {
+  if (node.tagName === "details" && !node.open) return node.children[0]?.textContent || "";
+  return node._text + node.children.map(visibleText).join("");
+}
 
 function harness({ supported = false, permission = "default", permissionResult = "granted", focused = false } = {}) {
   const nodes = new Map();
@@ -125,9 +129,61 @@ test("visible messages preserve delivery states, reasons, worker attribution and
   assert.match(messages, /Queued/); assert.match(messages, /Delivered to worker/); assert.match(messages, /Answered/); assert.match(messages, /Not delivered/); assert.match(messages, /Failed/);
   assert.ok(messages.includes(chat.messages[0].text)); assert.match(messages, /Worker stopped before answering/);
   assert.match(messages, /Solver · baseline/); assert.match(messages, /Can I ask about the task/);
-  assert.match(messages, /Model message/);
+  assert.match(messages, /Session message/);
   assert.doesNotMatch(messages, /PRIVATE_NOT_VISIBLE/);
   assert.match(fixture.node("#conversation-runtime").textContent, /Native OpenCode session: native-session/);
+});
+
+test("verified duplicate replies fold into the later canonical record while distinct progress stays visible", async () => {
+  const fixture = harness(); const chat = conversation();
+  const human = { id: "human", role: "user", text: "What happened?", status: "answered", worker_id: "worker-one" };
+  const tool = { id: "tool-reply", role: "assistant", origin: "reply", text: "The exact completed reply.", status: "answered", worker_id: "worker-one", duplicate_of: "final-reply" };
+  const progress = { id: "progress", role: "assistant", origin: "reply", text: "I am checking the result first.", status: "answered", worker_id: "worker-one" };
+  const final = { id: "final-reply", role: "assistant", origin: "reply", reply_to: [human.id], text: tool.text, status: "answered", worker_id: "worker-one" };
+  chat.messages = [human, tool, progress, final];
+  chat.decisions = [{ id: "decision", text: "Use the checked result.", status: "proposed", source_message_ids: [tool.id] }];
+  setup(fixture, chat); fixture.ui.renderConversations();
+  const pane = fixture.node("#conversation-messages");
+  assert.deepEqual(pane.children.map((node) => node.id), ["conversation-message-human", "conversation-message-progress", "conversation-message-final-reply"]);
+  assert.equal(visibleText(pane).split(tool.text).length - 1, 1);
+  assert.match(visibleText(pane), /I am checking the result first/);
+  const disclosure = walk(pane).find((node) => node.id === "conversation-duplicates-final-reply");
+  assert.equal(disclosure.open, false); assert.equal(disclosure.children[0].textContent, "Matching session record · 1");
+  assert.match(disclosure.textContent, /Record tool-reply · same reply as final-reply/);
+  const source = walk(fixture.node("#conversation-decisions")).find((node) => node.tagName === "button");
+  await source.fire("click");
+  assert.equal(disclosure.open, true);
+  const retained = walk(pane).find((node) => node.id === "conversation-message-tool-reply");
+  assert.equal(retained.scrolled, true); assert.equal(retained.focused, true);
+  fixture.ui.renderConversationDetail({ ...chat, runtime: { ...chat.runtime, status: "running" } });
+  assert.equal(walk(pane).find((node) => node.id === disclosure.id).open, true, "Polling preserves a source disclosure opened by the reader");
+  assert.deepEqual(chat.messages.map((item) => item.id), [human.id, tool.id, progress.id, final.id], "Rendering leaves the saved records intact");
+  assert.equal(fixture.requests.length, 0);
+});
+
+test("reply, update, initiated and legacy labels preserve their actual evidence", () => {
+  const fixture = harness(); const chat = conversation();
+  chat.messages = [
+    { id: "update", origin: "reply" }, { id: "reply", origin: "reply", reply_to: ["human"] },
+    { id: "initiative", origin: "model_initiated" }, { id: "legacy", origin: "legacy" }, { id: "unknown" },
+  ].map((item) => ({ role: "assistant", text: item.id, status: "answered", worker_id: "worker-one", ...item }));
+  setup(fixture, chat); fixture.ui.renderConversations();
+  const pane = fixture.node("#conversation-messages");
+  const label = (id) => walk(pane).find((node) => node.id === `conversation-message-${id}`).children[0].children[1].textContent;
+  assert.equal(label("update"), "Reply update"); assert.equal(label("reply"), "Reply");
+  assert.equal(label("initiative"), "Model-initiated message");
+  assert.equal(label("legacy"), "Session message"); assert.equal(label("unknown"), "Session message");
+});
+
+test("unpaired equal text and invalid duplicate targets remain visible", () => {
+  const fixture = harness(); const chat = conversation();
+  chat.messages = [
+    { id: "first" }, { id: "second" }, { id: "orphan", duplicate_of: "missing" },
+    { id: "self", duplicate_of: "self" }, { id: "user-target", role: "user" }, { id: "invalid", duplicate_of: "user-target" },
+  ].map((item) => ({ role: "assistant", text: "Same words do not establish shared ancestry.", status: "answered", worker_id: "worker-one", ...item }));
+  setup(fixture, chat); fixture.ui.renderConversations();
+  assert.equal(fixture.node("#conversation-messages").children.length, chat.messages.length);
+  assert.equal(walk(fixture.node("#conversation-messages")).filter((node) => node.tagName === "details").length, 0);
 });
 
 test("polling and context switches retain a draft and identify the new actual worker", () => {
@@ -338,7 +394,7 @@ test("first load avoids backlog; only subsequent explicit model-initiated posts 
   const state = setupAttention(fixture, { messages: [attention("historical")] });
   fixture.ui.renderConversationAttention(); await flush();
   assert.equal(fixture.notifications.length, 0); assert.equal(fixture.requests.length, 0);
-  state.conversations[0].attention_messages.push(attention("new"), attention("reply", "reply"), attention("legacy", "legacy"), { ...attention("user"), role: "user" });
+  state.conversations[0].attention_messages.push(attention("new"), attention("reply", "reply"), attention("legacy", "legacy"), { ...attention("user"), role: "user" }, { ...attention("folded"), duplicate_of: "new" });
   fixture.respond("/api/notifications/claim", { claimed: true });
   fixture.ui.renderConversationAttention(); await flush();
   assert.equal(fixture.notifications.length, 1); assert.match(fixture.notifications[0].options.body, /Visible post new/);
@@ -390,6 +446,21 @@ test("background and hidden conversation views do not advance read state", async
   const fixture = harness(); const chat = conversation(); chat.messages = [{ ...attention("unread"), status: "answered", worker_id: "worker-one" }]; chat.unread_message_ids = ["unread"]; chat.unread_count = 1;
   setup(fixture, chat); fixture.ui.renderConversations(); await fixture.ui.markVisibleConversationRead(); assert.equal(fixture.requests.length, 0);
   fixture.focus(true); fixture.ui.setView("runs"); await fixture.ui.markVisibleConversationRead(); assert.equal(fixture.requests.length, 0);
+});
+
+test("folded unread record IDs follow the visible canonical reply for read acknowledgement", async () => {
+  const fixture = harness({ focused: true }); const chat = conversation();
+  const tool = { ...attention("tool", "reply"), duplicate_of: "canonical", status: "answered", worker_id: "worker-one" };
+  const canonical = { ...attention("canonical", "reply"), text: tool.text, status: "answered", worker_id: "worker-one" };
+  chat.messages = [tool, canonical]; chat.unread_message_ids = [tool.id, canonical.id]; chat.unread_count = 2;
+  const state = setup(fixture, chat); state.notifications = { enabled: false, unread_count: 2 };
+  fixture.rect("conversation-message-canonical", { top: 800, bottom: 900, left: 10, right: 410, width: 400, height: 100 });
+  fixture.ui.renderConversations(); assert.equal(fixture.requests.length, 0, "A hidden folded record does not make an offscreen reply read");
+  fixture.rect("conversation-message-canonical", { top: 10, bottom: 110, left: 10, right: 410, width: 400, height: 100 });
+  fixture.respond("/api/conversations/chat-one/read", { ...chat, unread_message_ids: [], unread_count: 0 });
+  await fixture.ui.markVisibleConversationRead();
+  assert.deepEqual(fixture.requests[0].body, { message_ids: [tool.id, canonical.id] });
+  assert.equal(fixture.node("#nav-conversation-unread").hidden, true);
 });
 
 test("a delayed read acknowledgement cannot erase a newer human message or model reply", async () => {

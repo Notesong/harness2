@@ -31,6 +31,9 @@ class UITests(unittest.TestCase):
             "HARNESS2_RUNS_DIR": str(self.root / "runs"),
             "HARNESS2_LOCAL_API_KEY": SECRET,
             "HARNESS2_JUDGE_API_KEY": SECRET,
+            # config imports may load a developer's managed-model .env. These
+            # HTTP fixtures use synthetic jobs and must never load those weights.
+            "HARNESS2_LOCAL_RUNTIME": "external",
         })
         self.environment.start()
         self.app = App(self.root)
@@ -363,12 +366,16 @@ class UITests(unittest.TestCase):
         record["kind"] = "benchmark"
         record["models"] = self.app.workspace.settings()
         self.app.jobs._write(record)
-        with patch.object(JobManager, "_plan", return_value=[]) as plan:
+        with patch.object(JobManager, "_plan", return_value=[]) as plan, patch(
+            "harness2.ui.jobs.ManagedLocalServer",
+            side_effect=AssertionError("Budget comparison must not start a model"),
+        ) as model_server:
             status, resumed, _ = self.request("POST", f"/api/jobs/{record['id']}/resume", {
                 "confirm": True})
             self.assertEqual(status, 201, resumed)
             self.assertEqual(self.wait_job(resumed["id"])["status"], "succeeded")
             plan.assert_called_once()
+            model_server.assert_not_called()
         for changed in ({"local_context": "65536"}, {"local_output": "2048"}):
             with self.subTest(changed=changed):
                 status, saved, _ = self.request("POST", "/api/settings", {

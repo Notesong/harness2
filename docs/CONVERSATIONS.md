@@ -57,6 +57,15 @@ or a context switch, undelivered messages are not silently replayed to another
 worker. Drafts stay in the current open page while the selected conversation
 is polled; they are separate from messages that have been sent.
 
+If the conversation tool and the normal assistant response repeat exactly the
+same reply to the same human turn, Studio shows one reply with a collapsed
+**Matching session record** disclosure. Both original messages and source IDs
+remain in history. Pairing requires verified native session, worker, and human
+parent identities; similar wording or a repeated phrase in another turn is not
+enough. Distinct progress updates remain separate. A tool post answering human
+input is labelled **Reply update**; only verified independent contact is labelled
+**Model-initiated message**. Older unclassified posts are **Session messages**.
+
 ## Unread messages and optional notifications
 
 The sidebar and conversation list show unread assistant messages, including
